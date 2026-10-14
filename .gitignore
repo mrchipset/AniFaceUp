@@ -1,0 +1,25 @@
+# deepwork local session state (git-local, OpenCode-readable)
+.slim/deepwork/
+
+# node / vite
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# tauri / rust
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# vendored MediaPipe runtime (regenerate with: npm run vendor:mediapipe)
+public/mediapipe/
+
+# certs / os noise
+certs/
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
