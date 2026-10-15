@@ -54,6 +54,32 @@ export class AvatarController {
     this.applyTransform()
   }
 
+  /**
+   * Swap the avatar model in place. Destroys the current `Aniface`, then
+   * recreates it on the SAME canvas (never passing `videoElement`) and
+   * re-applies the head-only stabilization.
+   */
+  async loadModel(modelPath: string): Promise<void> {
+    this.destroyAniface()
+    await this.init(modelPath)
+  }
+
+  /** Tear down the aniface instance and release its WebGL resources. */
+  dispose(): void {
+    this.destroyAniface()
+  }
+
+  private destroyAniface(): void {
+    if (!this.aniface) return
+    try {
+      this.aniface.destroy()
+    } catch (error) {
+      console.warn('[avatar] destroy failed:', error)
+    }
+    this.aniface = null
+    this.wrapper = null
+  }
+
   /** Add a parent group so we can offset/scale the model without touching the root matrix. */
   private ensureWrapper(): void {
     if (this.wrapper) return

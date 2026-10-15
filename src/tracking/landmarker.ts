@@ -10,14 +10,9 @@ import {
 import { FACE_LANDMARKER_MODEL, WASM_PATH } from '../config'
 
 let landmarker: FaceLandmarker | null = null
-let delegate: 'GPU' | 'CPU' | null = null
 
 export function getLandmarker(): FaceLandmarker | null {
   return landmarker
-}
-
-export function getLandmarkerDelegate(): string | null {
-  return delegate
 }
 
 function optionsFor(dev: 'GPU' | 'CPU'): FaceLandmarkerOptions {
@@ -37,7 +32,6 @@ export async function ensureLandmarker(): Promise<FaceLandmarker> {
   for (const dev of ['GPU', 'CPU'] as const) {
     try {
       landmarker = await FaceLandmarker.createFromOptions(vision, optionsFor(dev))
-      delegate = dev
       console.info(`[landmarker] ready (${dev})`)
       return landmarker
     } catch (error) {

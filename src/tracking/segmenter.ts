@@ -13,14 +13,9 @@ import { SELFIE_SEGMENTER_MODEL, WASM_PATH } from '../config'
 
 let segmenter: ImageSegmenter | null = null
 let tried = false
-let delegate: 'GPU' | 'CPU' | null = null
 
 export function getSegmenter(): ImageSegmenter | null {
   return segmenter
-}
-
-export function getSegmenterDelegate(): string | null {
-  return delegate
 }
 
 function optionsFor(dev: 'GPU' | 'CPU'): ImageSegmenterOptions {
@@ -39,7 +34,6 @@ export async function ensureSegmenter(): Promise<ImageSegmenter | null> {
   for (const dev of ['GPU', 'CPU'] as const) {
     try {
       segmenter = await ImageSegmenter.createFromOptions(vision, optionsFor(dev))
-      delegate = dev
       console.info(`[segmenter] ready (${dev})`)
       return segmenter
     } catch (error) {
@@ -50,16 +44,8 @@ export async function ensureSegmenter(): Promise<ImageSegmenter | null> {
   return null
 }
 
-export type MaskKind = 'confidence' | 'category' | 'none'
-
-/**
- * Alpha mask derived from a segmentation result. White RGB with the person
- * confidence in the alpha channel, so it can be used with `destination-in`.
- */
 export class SelfieMask {
   readonly canvas: HTMLCanvasElement
-  kind: MaskKind = 'none'
-  personPct = 0
   private readonly ctx: CanvasRenderingContext2D
 
   constructor() {
@@ -72,7 +58,6 @@ export class SelfieMask {
   /** Returns true when a usable mask was produced. */
   update(result: ImageSegmenterResult | null, invert: boolean): boolean {
     if (!result) {
-      this.kind = 'none'
       return false
     }
     // selfie_segmenter usually emits only a category mask (0/1); some versions
@@ -86,17 +71,14 @@ export class SelfieMask {
       mw = mask.width
       mh = mask.height
       arr = mask.getAsFloat32Array()
-      this.kind = 'confidence'
     } else if (result.categoryMask) {
       const mask = result.categoryMask
       mw = mask.width
       mh = mask.height
       arr = mask.getAsUint8Array()
       isCategory = true
-      this.kind = 'category'
     }
     if (!arr || !mw || !mh) {
-      this.kind = 'none'
       return false
     }
     if (this.canvas.width !== mw || this.canvas.height !== mh) {
@@ -104,17 +86,14 @@ export class SelfieMask {
       this.canvas.height = mh
     }
     const image = this.ctx.createImageData(mw, mh)
-    let person = 0
     for (let i = 0; i < mw * mh; i++) {
       let a = isCategory ? (arr[i] > 0 ? 1 : 0) : arr[i]
       if (invert) a = 1 - a
-      person += a
       image.data[i * 4] = 255
       image.data[i * 4 + 1] = 255
       image.data[i * 4 + 2] = 255
       image.data[i * 4 + 3] = Math.max(0, Math.min(1, a)) * 255
     }
-    this.personPct = Math.round((100 * person) / (mw * mh))
     this.ctx.putImageData(image, 0, 0)
     return true
   }

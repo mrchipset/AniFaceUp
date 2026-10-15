@@ -75,6 +75,8 @@ export class HarnessControls {
     this.startBtn.addEventListener('click', () => this.callbacks.onStartCamera())
     this.stopBtn.addEventListener('click', () => this.callbacks.onStopCamera())
     this.build(container)
+    // Composite defaults to mirrored, so the preview must match at boot.
+    this.preview?.classList.toggle('mirror', this.check('c_mirror'))
   }
 
   // ---- state getters ----
@@ -404,7 +406,8 @@ export class HarnessControls {
     input.max = String(spec.max)
     input.step = String(spec.step)
     input.value = String(spec.value)
-    input.title = 'wheel to adjust'
+    input.title = 'wheel to adjust · Shift coarse · Alt fine'
+    input.style.cursor = 'ns-resize'
     const value = document.createElement('span')
     value.className = 'readout'
     value.textContent = spec.value.toFixed(spec.decimals)
@@ -414,6 +417,30 @@ export class HarnessControls {
       else if (kind === 'expression') this.callbacks.onExpression()
       else this.callbacks.onRefresh()
     })
+    input.addEventListener(
+      'wheel',
+      (e) => {
+        if (input.disabled) return
+        const min = parseFloat(input.min)
+        const max = parseFloat(input.max)
+        const step = parseFloat(input.step) || 1
+        if (!isFinite(min) || !isFinite(max)) return
+        let inc = Math.max(step, (max - min) / 100)
+        if (e.shiftKey) inc *= 10
+        else if (e.altKey) inc /= 10
+        const dir = e.deltaY < 0 ? 1 : -1
+        let v = parseFloat(input.value) + dir * inc
+        v = Math.min(max, Math.max(min, v))
+        v = Math.round(v / step) * step
+        const decimals = (String(step).split('.')[1] || '').length
+        v = parseFloat(v.toFixed(Math.min(decimals, 6)))
+        if (v === parseFloat(input.value)) return
+        e.preventDefault()
+        input.value = String(v)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      },
+      { passive: false },
+    )
     this.inputs.set(spec.key, input)
     this.readouts.set(spec.key, value)
     el.append(label, input, value)

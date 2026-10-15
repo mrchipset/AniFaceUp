@@ -26,15 +26,12 @@ export class CameraController {
     return this.stream !== null
   }
 
-  get streamRef(): MediaStream | null {
-    return this.stream
-  }
-
   /**
    * Request the camera, attach it to the video element and wait for metadata.
    * Resolves with a device label for diagnostics.
    */
   async start(): Promise<string> {
+    this.stop() // never leak a prior stream if start() is called twice
     const stream = await navigator.mediaDevices.getUserMedia({
       video: CAMERA_CONSTRAINTS,
       audio: false,
@@ -57,11 +54,6 @@ export class CameraController {
       this.stream = null
     }
     this.video.srcObject = null
-  }
-
-  async listDevices(): Promise<MediaDeviceInfo[]> {
-    if (!navigator.mediaDevices?.enumerateDevices) return []
-    return navigator.mediaDevices.enumerateDevices()
   }
 
   /** Map a getUserMedia rejection onto a short, plain-language message. */

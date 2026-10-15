@@ -49,10 +49,6 @@ export class CompositeRenderer {
     this.settings = { ...this.settings, ...partial }
   }
 
-  getSettings(): CompositeSettings {
-    return { ...this.settings }
-  }
-
   /** Provide the person alpha mask produced by the segmenter (or null). */
   setMask(canvas: HTMLCanvasElement | null, hasMask: boolean): void {
     this.maskCanvas = canvas

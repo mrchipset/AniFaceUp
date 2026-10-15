@@ -65,6 +65,7 @@ function main(): void {
 
   let controls: HarnessControls
   let running = false
+  let starting = false
   let maskActive = false
   let lastFrame: LastFrame | null = null
   let lastDetectMs = 0
@@ -126,11 +127,13 @@ function main(): void {
 
   // ---- camera ----
   async function startCamera(): Promise<void> {
+    if (starting || camera.running) return
     const problem = CameraController.supportProblem()
     if (problem) {
       controls.setStatus('camera unavailable: ' + problem)
       return
     }
+    starting = true
     controls.setRunning(false)
     controls.setStatus('requesting camera…')
     try {
@@ -149,6 +152,8 @@ function main(): void {
       camera.stop()
       controls.setStatus('startup failed: ' + CameraController.describeError(error))
       controls.setRunning(false)
+    } finally {
+      starting = false
     }
   }
 
@@ -216,6 +221,8 @@ function main(): void {
     }
     if (!overlay.width || !overlay.height) return
     octx.clearRect(0, 0, overlay.width, overlay.height)
+    octx.lineCap = 'round'
+    octx.lineJoin = 'round'
     if (video.readyState >= 2 && vw && vh) octx.drawImage(video, 0, 0, overlay.width, overlay.height)
     if (!result?.faceLandmarks?.length) return
     const showLm = controls.showLandmarks

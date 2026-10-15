@@ -34,16 +34,8 @@ export class OutputRenderer {
     this.selection = { ...SELECTION_DEFAULTS }
   }
 
-  getSelection(): Selection {
-    return { ...this.selection }
-  }
-
   setSelection(partial: Partial<Selection>): void {
     this.selection = { ...this.selection, ...partial }
-  }
-
-  resetSelection(): void {
-    this.selection = { ...SELECTION_DEFAULTS }
   }
 
   /** Selection rectangle in composite pixel coordinates (top-left origin). */
@@ -101,13 +93,6 @@ export class OutputRenderer {
       Math.max(20, r.y - 8),
     )
     cctx.restore()
-  }
-
-  /** Move the selection center from a pointer position over the composite. */
-  moveSelectionTo(clientX: number, clientY: number, rect: DOMRect): void {
-    if (!rect.width || !rect.height) return
-    this.selection.cx = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
-    this.selection.cy = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height))
   }
 
   private applyMask(c: CanvasRenderingContext2D, ow: number, oh: number): void {
