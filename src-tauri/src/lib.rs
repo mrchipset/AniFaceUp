@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -11,6 +12,30 @@ use tauri_plugin_dialog::DialogExt;
 /// main window to the picture-in-picture window.
 #[derive(Default)]
 struct FrameHub(Mutex<Option<Channel<InvokeResponseBody>>>);
+
+/// User-configurable UI/runtime state shared with the window-event handler.
+struct UiState {
+    /// When true, minimizing the main window hides it to the tray.
+    minimize_to_tray: AtomicBool,
+    /// Edge-detect for minimize transitions (guards duplicate signals).
+    was_minimized: AtomicBool,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            // Preserve the previous always-minimize-to-tray behavior by default.
+            minimize_to_tray: AtomicBool::new(true),
+            was_minimized: AtomicBool::new(false),
+        }
+    }
+}
+
+/// Enable or disable minimize-to-tray from the frontend.
+#[tauri::command]
+fn set_minimize_to_tray(enabled: bool, state: tauri::State<'_, UiState>) {
+    state.minimize_to_tray.store(enabled, Ordering::SeqCst);
+}
 
 /// Registers (or replaces) the pip window's frame channel. Called by the pip
 /// frontend once its webview is ready.
@@ -96,6 +121,8 @@ async fn export_output(
 /// Un-hides/un-minimizes the main window, focuses it, and notifies the frontend.
 /// Any open pip window is hidden, since the main window now owns the view.
 fn restore_main_window(app: &tauri::AppHandle) {
+    // Reset the minimize edge-detector so the next minimize re-signals cleanly.
+    app.state::<UiState>().was_minimized.store(false, Ordering::SeqCst);
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.unminimize();
         let _ = main.show();
@@ -118,6 +145,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(FrameHub::default())
+        .manage(UiState::default())
         .on_permission_request(|_webview, kind| match kind {
             PermissionKind::Camera => PermissionResponse::Allow,
             _ => PermissionResponse::Default,
@@ -134,12 +162,19 @@ pub fn run() {
                             let _ = pip.close();
                         }
                     }
-                    // Minimize-to-tray: hiding (rather than keeping minimized)
-                    // avoids a taskbar entry while hidden.
+                    // Minimize-to-tray: always signal the minimize transition so
+                    // the PiP/loop can keep running, but only hide the window
+                    // when the user enabled minimize-to-tray.
                     WindowEvent::Resized(_) => {
-                        if window.is_minimized().unwrap_or(false) {
-                            let _ = window.hide();
+                        let state = window.state::<UiState>();
+                        let is_min = window.is_minimized().unwrap_or(false);
+                        if is_min && !state.was_minimized.swap(true, Ordering::SeqCst) {
+                            if state.minimize_to_tray.load(Ordering::SeqCst) {
+                                let _ = window.hide();
+                            }
                             let _ = window.emit("tray://minimized", ());
+                        } else if !is_min && state.was_minimized.swap(false, Ordering::SeqCst) {
+                            let _ = window.emit("tray://restored", ());
                         }
                     }
                     _ => {}
@@ -187,7 +222,8 @@ pub fn run() {
             subscribe_frames,
             push_frame,
             clear_frames,
-            restore_main
+            restore_main,
+            set_minimize_to_tray
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

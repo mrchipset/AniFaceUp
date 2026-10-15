@@ -70,6 +70,15 @@ export async function restoreMain(): Promise<void> {
   await invoke('restore_main')
 }
 
+/**
+ * Tell the native side whether minimizing the main window should hide it to the
+ * tray. No-op outside Tauri.
+ */
+export async function setMinimizeToTray(enabled: boolean): Promise<void> {
+  if (!isTauri()) return
+  await invoke('set_minimize_to_tray', { enabled })
+}
+
 /** Subscribe to `tray://minimized`. Returns an unlisten fn (no-op outside Tauri). */
 export async function onTrayMinimized(cb: () => void): Promise<() => void> {
   return listenTrayEvent('tray://minimized', cb)

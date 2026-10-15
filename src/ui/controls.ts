@@ -48,6 +48,8 @@ export interface ControlsCallbacks {
   onImportModel(): void
   /** The "output window when minimized" checkbox changed. */
   onTogglePip(): void
+  /** The "minimize to tray" checkbox changed. */
+  onToggleMinimizeToTray(): void
 }
 
 interface RangeSpec {
@@ -140,6 +142,10 @@ export class HarnessControls {
 
   get pipEnabled(): boolean {
     return this.check('pip_on')
+  }
+
+  get minimizeToTray(): boolean {
+    return this.check('tray_min')
   }
 
   get blurInvert(): boolean {
@@ -343,6 +349,7 @@ export class HarnessControls {
     return this.section('Capture', (body) => {
       body.append(this.row([this.startBtn, this.stopBtn]))
       body.append(this.row([this.checkbox('pip_on', 'output window when minimized', false)], 'wrap'))
+      body.append(this.row([this.checkbox('tray_min', 'minimize to tray', true)], 'wrap'))
     })
   }
 
@@ -622,6 +629,10 @@ export class HarnessControls {
     }
     if (key === 'pip_on') {
       this.callbacks.onTogglePip()
+      return
+    }
+    if (key === 'tray_min') {
+      this.callbacks.onToggleMinimizeToTray()
       return
     }
     this.callbacks.onRefresh()

@@ -17,7 +17,7 @@ import { AvatarController } from './avatar/avatarController'
 import { CompositeRenderer } from './compose/composite'
 import { OutputRenderer } from './compose/output'
 import { isRecording, screenshot, startRecording, stopRecording } from './export/recorder'
-import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame } from './lib/tauri'
+import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame, setMinimizeToTray } from './lib/tauri'
 import { hidePip, isPipVisible, showPip } from './pip/pipWindow'
 import { createControls, type HarnessControls } from './ui/controls'
 
@@ -41,7 +41,6 @@ function required<T extends HTMLElement>(id: string): T {
 }
 
 function main(): void {
-  const diagEl = required<HTMLSpanElement>('diag')
   const video = required<HTMLVideoElement>('webcam')
   const overlay = required<HTMLCanvasElement>('overlay')
   const compCanvas = required<HTMLCanvasElement>('composite')
@@ -49,10 +48,6 @@ function main(): void {
   const avatarCanvas = required<HTMLCanvasElement>('avatar-source')
   const controlsContainer = required<HTMLDivElement>('controls')
   const preview = document.getElementById('preview')
-
-  diagEl.textContent =
-    `origin=${location.origin} secure=${window.isSecureContext} ` +
-    `mediaDevices=${!!navigator.mediaDevices}`
 
   const octxMaybe = overlay.getContext('2d')
   if (!octxMaybe) throw new Error('2D context unavailable for overlay canvas')
@@ -496,11 +491,14 @@ function main(): void {
     onScreenshot: takeScreenshot,
     onImportModel: importCustomModel,
     onTogglePip: syncPip,
+    onToggleMinimizeToTray: () => void setMinimizeToTray(controls.minimizeToTray),
   })
   controls.attachSelectionDrag(compCanvas)
   controls.setRunning(false)
   controls.setStatus('idle')
   applyDrawSettings()
+  // Push the checkbox default to Rust so its state matches the UI at boot.
+  void setMinimizeToTray(controls.minimizeToTray)
   watchTrayMode()
 }
 
@@ -509,5 +507,8 @@ try {
 } catch (error) {
   console.error('[anifaceup] boot failed:', error)
   const diag = document.getElementById('diag')
-  if (diag) diag.textContent = 'boot failed: ' + (error instanceof Error ? error.message : String(error))
+  if (diag) {
+    diag.textContent = 'boot failed: ' + (error instanceof Error ? error.message : String(error))
+    diag.removeAttribute('hidden')
+  }
 }
