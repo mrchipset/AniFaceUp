@@ -14,7 +14,7 @@ let currentUrl: string | null = null
 
 function render(buf: ArrayBuffer): void {
   if (!img) return
-  const blob = new Blob([buf], { type: 'image/jpeg' })
+  const blob = new Blob([buf], { type: 'image/png' })
   const url = URL.createObjectURL(blob)
   img.src = url
   const previous = currentUrl

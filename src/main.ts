@@ -123,8 +123,9 @@ function main(): void {
               pipPushPending = false
             })
         },
-        'image/jpeg',
-        0.7,
+        // PNG (not JPEG) so the output mask's transparent corners survive;
+        // JPEG has no alpha and would render them black.
+        'image/png',
       )
     } catch (error) {
       pipPushPending = false
