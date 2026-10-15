@@ -1,7 +1,7 @@
 use tauri::webview::{PermissionKind, PermissionResponse};
 use tauri_plugin_dialog::DialogExt;
 
-/// Opens a native open-file dialog (filtered to glb/gltf) and returns the
+/// Opens a native open-file dialog (filtered to glb) and returns the
 /// chosen file's bytes. The frontend never supplies a path.
 ///
 /// If the user cancels, an empty response is returned so JS receives a
@@ -15,7 +15,7 @@ async fn import_model(app: tauri::AppHandle) -> Result<tauri::ipc::Response, Str
     let picked = app
         .dialog()
         .file()
-        .add_filter("3D model", &["glb", "gltf"])
+        .add_filter("3D model", &["glb"])
         .blocking_pick_file();
 
     let Some(file_path) = picked else {

@@ -13,6 +13,7 @@ const MIME_CANDIDATES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'vide
 
 let recorder: MediaRecorder | null = null
 let chunks: BlobPart[] = []
+let captureStream: MediaStream | null = null
 
 /** First supported WebM mime type, or `''` to let the platform choose. */
 function pickMimeType(): string {
@@ -23,17 +24,31 @@ function pickMimeType(): string {
   return ''
 }
 
-/** Begin capturing `canvas` at 30fps. No-op if already recording. */
+/** Stop and release the retained capture stream, if any. */
+function releaseStream(): void {
+  if (captureStream) {
+    captureStream.getTracks().forEach((track) => track.stop())
+    captureStream = null
+  }
+}
+
+/** Begin capturing `canvas` at 30fps. No-op while a recording is in progress. */
 export function startRecording(canvas: HTMLCanvasElement): void {
-  if (recorder) return
+  if (recorder && recorder.state !== 'inactive') return
+  if (recorder) {
+    // Stale recorder left behind by a previous failed stop — release and replace.
+    releaseStream()
+    recorder = null
+  }
+  chunks = []
   const stream = canvas.captureStream(30)
+  captureStream = stream
   const mimeType = pickMimeType()
   const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
-  chunks = []
   rec.ondataavailable = (event): void => {
     if (event.data.size > 0) chunks.push(event.data)
   }
-  rec.start()
+  rec.start(1000)
   recorder = rec
 }
 
@@ -46,6 +61,7 @@ export function stopRecording(): Promise<Blob | null> {
       const blob = chunks.length ? new Blob(chunks, { type: rec.mimeType || 'video/webm' }) : null
       chunks = []
       recorder = null
+      releaseStream()
       resolve(blob)
     }
     rec.stop()

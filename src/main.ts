@@ -142,6 +142,18 @@ function main(): void {
     }
   }
 
+  /** Stop the active recorder, reset the button and save whatever was captured. */
+  function finishRecording(): void {
+    void stopRecording().then((blob) => {
+      controls.setRecording(false)
+      if (!blob) {
+        controls.showToast('recording failed', 'error')
+        return
+      }
+      void saveBlob(blob, `anifaceup-${timestamp()}.webm`, 'recording')
+    })
+  }
+
   function toggleRecord(): void {
     if (!isRecording()) {
       try {
@@ -154,14 +166,7 @@ function main(): void {
       }
       return
     }
-    void stopRecording().then((blob) => {
-      controls.setRecording(false)
-      if (!blob) {
-        controls.showToast('recording failed', 'error')
-        return
-      }
-      void saveBlob(blob, `anifaceup-${timestamp()}.webm`, 'recording')
-    })
+    finishRecording()
   }
 
   function takeScreenshot(): void {
@@ -174,13 +179,30 @@ function main(): void {
     void importModel()
       .then(async (buf) => {
         if (!buf) return
+        // Replace (and release) any previously staged pending URL.
+        if (pendingModelPath) {
+          URL.revokeObjectURL(pendingModelPath)
+          pendingModelPath = null
+        }
         const url = URL.createObjectURL(new Blob([buf], { type: 'model/gltf-binary' }))
-        if (avatar.initialized) {
-          await avatar.loadModel(url)
-          controls.showToast('model imported', 'success')
-        } else {
+        if (!avatar.initialized) {
           pendingModelPath = url
           controls.showToast('model staged — start camera to apply', 'success')
+          return
+        }
+        try {
+          await avatar.loadModel(url)
+          controls.showToast('model imported', 'success')
+        } catch (error) {
+          controls.showToast(`import failed: ${errMessage(error)}`, 'error')
+          // Recover to the bundled model so the avatar is never left broken.
+          try {
+            await avatar.loadModel(AVATAR_MODEL)
+          } catch (fallbackError) {
+            controls.showToast(`model reload failed: ${errMessage(fallbackError)}`, 'error')
+          }
+        } finally {
+          URL.revokeObjectURL(url)
         }
       })
       .catch((error: unknown) => controls.showToast(`import failed: ${errMessage(error)}`, 'error'))
@@ -209,7 +231,10 @@ function main(): void {
       controls.setDevice(label)
       controls.setStatus('loading avatar model…')
       await avatar.init(pendingModelPath ?? AVATAR_MODEL)
-      pendingModelPath = null
+      if (pendingModelPath) {
+        URL.revokeObjectURL(pendingModelPath)
+        pendingModelPath = null
+      }
       controls.setStatus('initializing face tracker…')
       await ensureLandmarker()
       running = true
@@ -227,6 +252,8 @@ function main(): void {
   }
 
   function stopCamera(): void {
+    // Never let a recording keep running over a frozen output.
+    if (isRecording()) finishRecording()
     running = false
     camera.stop()
     lastFrame = null
