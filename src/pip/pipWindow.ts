@@ -71,6 +71,12 @@ async function createPipWindow(): Promise<WebviewWindow | null> {
   try {
     win = new WebviewWindow(LABEL, {
       url: 'pip.html',
+      // Own WebView2 user-data directory. The main window sets custom
+      // `additionalBrowserArgs`; WebView2 requires every window sharing a data
+      // directory to use IDENTICAL environment options, otherwise creation
+      // fails with 0x8007139F (ERROR_INVALID_STATE). A separate directory gives
+      // the PiP its own environment with default options.
+      dataDirectory: 'pip',
       title: 'Output',
       width: WIDTH,
       height: HEIGHT,
