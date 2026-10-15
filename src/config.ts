@@ -31,6 +31,30 @@ export const BLENDSHAPE_MULTIPLIERS: Record<string, number> = {
   browInnerUp: 1.2,
 }
 
+/**
+ * Eye-gaze mirror correction.
+ *
+ * The avatar head is driven by the facial transform matrix, which `aniface`
+ * mirrors sagittally (negates yaw+roll) so the avatar behaves like the user's
+ * reflection. Blendshapes, however, are matched by name with no mirror, so the
+ * eye-look signals land on the opposite side and the avatar's gaze ends up
+ * horizontally reversed. We reflect the eye-look family (Left <-> Right) before
+ * handing the result to `aniface` so the gaze matches the mirrored head.
+ */
+export const MIRROR_EYE_GAZE = true
+
+/** Left<->Right reflection of the ARKit eye-look blendshape names. */
+export const EYE_GAZE_MIRROR: Record<string, string> = {
+  eyeLookInLeft: 'eyeLookInRight',
+  eyeLookInRight: 'eyeLookInLeft',
+  eyeLookOutLeft: 'eyeLookOutRight',
+  eyeLookOutRight: 'eyeLookOutLeft',
+  eyeLookUpLeft: 'eyeLookUpRight',
+  eyeLookUpRight: 'eyeLookUpLeft',
+  eyeLookDownLeft: 'eyeLookDownRight',
+  eyeLookDownRight: 'eyeLookDownLeft',
+}
+
 export const AVATAR_CAMERA = {
   fov: 40,
   enableControls: true,

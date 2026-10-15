@@ -18,6 +18,8 @@ import {
   AVATAR_CAMERA,
   AVATAR_CANVAS_SIZE,
   BLENDSHAPE_MULTIPLIERS,
+  EYE_GAZE_MIRROR,
+  MIRROR_EYE_GAZE,
   RESET_CAMERA,
   TRANSFORM_DEFAULTS,
   type ModelTransform,
@@ -127,11 +129,31 @@ export class AvatarController {
     this.wrapper.position.set(this.transform.x, this.transform.y, this.transform.z)
   }
 
+  /**
+   * Reflect the eye-look blendshapes left<->right before aniface consumes them.
+   * The head is mirrored internally by aniface but blendshapes are not, so
+   * without this the avatar's horizontal gaze is reversed relative to the head.
+   */
+  private mirrorEyeGaze(result: FaceLandmarkerResult): void {
+    if (!MIRROR_EYE_GAZE) return
+    const categories = result.faceBlendshapes?.[0]?.categories
+    if (!categories) return
+    const original = new Map<string, number>()
+    for (const category of categories) original.set(category.categoryName, category.score)
+    for (const category of categories) {
+      const source = EYE_GAZE_MIRROR[category.categoryName]
+      if (source === undefined) continue
+      const value = original.get(source)
+      if (value !== undefined) category.score = value
+    }
+  }
+
   /** Update blendshapes + head pose. Call before `render()` each frame. */
   processLandmarks(result: FaceLandmarkerResult | null): void {
     const renderer = this.aniface?.getRenderer()
     if (!renderer) return
     if (result?.faceLandmarks?.length) {
+      this.mirrorEyeGaze(result)
       renderer.processLandmarks(result)
       this.stabilize()
     }

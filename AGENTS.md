@@ -98,7 +98,13 @@ These are hard-won facts. Do not "fix" them without evidence.
    `Scale = 1` is natural size. Preserve this.
 3. **Mirror rule** — when a view is mirrored, face-box `cx = 1 - cx`, and
    `pasteMirror = !viewMirror` (aniface already mirrors Y/Z internally).
-   Getting this wrong double-mirrors the avatar.
+   Getting this wrong double-mirrors the avatar. Do NOT switch to
+   `pasteMirror = viewMirror`: with this rule the head is already correct in
+   both modes (aniface negates yaw/roll for head-only models). Note that
+   aniface mirrors the HEAD but matches blendshapes by name with NO mirror, so
+   the per-eye gaze (`eyeLookIn*`/`eyeLookOut*`) lands reversed — corrected
+   separately and CONSTANTLY by `AvatarController.mirrorEyeGaze` (Left<->Right
+   swap), which must never be tied to the view mirror.
 4. **Draw ordering** — `drawComposite()` → `drawOutput()` →
    `drawSelectionOverlay()`. The avatar canvas is transparent and read in the
    same JS task (no `preserveDrawingBuffer` needed).
@@ -112,9 +118,11 @@ These are hard-won facts. Do not "fix" them without evidence.
 7. **Asset paths** — keep Vite `base: '/'`. Bundled `public/` assets resolve
    root-absolute (`/mediapipe/...`, `/models/...`) in dev and in the packaged
    app. Only user-picked external files need the `asset:` protocol.
-8. **CSP** — `app.security.csp` is `null` by default. If ever set, WASM needs
-   `'wasm-unsafe-eval'` in an explicit `script-src` (not `default-src`), plus
-   `worker-src 'self' blob:`.
+8. **CSP** — `app.security.csp` (packaged) and `app.security.devCsp` (dev) are
+   both set. WASM needs `'wasm-unsafe-eval'` in an explicit `script-src` (not
+   `default-src`), `worker-src 'self' blob:`, and `connect-src` must include
+   `ipc: http://ipc.localhost blob: data:`; `devCsp` additionally allows
+   `ws://localhost:1420` for Vite HMR.
 
 ## 6. UI / design rules
 
