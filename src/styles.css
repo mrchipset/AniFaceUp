@@ -299,9 +299,14 @@ dt {
 
 /* --------------------------------------------------------------- workspace */
 
+/*
+ * Always two columns: the stage on the left, the control rail on the right.
+ * The rail keeps a usable minimum width and grows toward its old 360px cap;
+ * the stage takes whatever is left. The layout never stacks at any width.
+ */
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) clamp(272px, 30vw, 360px);
   grid-template-rows: minmax(0, 1fr);
   gap: 20px;
   min-height: 0;
@@ -805,44 +810,11 @@ input[type="range"]::-moz-range-thumb {
 
 /* -------------------------------------------------------------- responsive */
 
-@media (max-width: 1040px) {
-  body {
-    overflow: auto;
-  }
-
-  .app {
-    height: auto;
-    min-height: 100dvh;
-  }
-
-  .workspace {
-    grid-template-columns: minmax(0, 1fr);
-    overflow: visible;
-  }
-
-  .stage,
-  .rail {
-    overflow: visible;
-  }
-
-  /*
-   * Stacked layout: the app is no longer a fixed viewport, so the stage has no
-   * definite height to fill. Release the flex-fill contract and fall back to the
-   * composite's intrinsic ratio (full width, height follows) like the tiles.
-   */
-  .monitor-primary,
-  .frame-primary {
-    flex: 0 0 auto;
-  }
-
-  .frame-primary > #composite {
-    width: 100%;
-    height: auto;
-    max-width: none;
-    max-height: none;
-  }
-}
-
+/*
+ * The two-pane fixed-height shell holds at every width (see .workspace). Only
+ * chrome adapts: the app bar wraps and the tile captions/minor chrome drop out
+ * when space is tight. Nothing here stacks the rail under the stage.
+ */
 @media (max-width: 760px) {
   .appbar {
     flex-wrap: wrap;
@@ -852,10 +824,6 @@ input[type="range"]::-moz-range-thumb {
   .appbar-meta {
     order: 3;
     flex-basis: 100%;
-  }
-
-  .monitor-row {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .monitor-hint {
