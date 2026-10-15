@@ -1,5 +1,33 @@
+use std::sync::Mutex;
+
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::webview::{PermissionKind, PermissionResponse};
+use tauri::State;
 use tauri_plugin_dialog::DialogExt;
+
+/// Holds the single subscriber channel used to stream output frames from the
+/// main window to the picture-in-picture window.
+#[derive(Default)]
+struct FrameHub(Mutex<Option<Channel<InvokeResponseBody>>>);
+
+/// Registers (or replaces) the pip window's frame channel. Called by the pip
+/// frontend once its webview is ready.
+#[tauri::command]
+fn subscribe_frames(on_frame: Channel<InvokeResponseBody>, hub: State<'_, FrameHub>) {
+    *hub.0.lock().unwrap() = Some(on_frame);
+}
+
+/// Relays a raw JPEG frame (sent as a raw IPC body by the main window) to the
+/// subscribed pip channel, if any. Dropped frames are ignored.
+#[tauri::command]
+fn push_frame(request: tauri::ipc::Request<'_>, hub: State<'_, FrameHub>) -> tauri::Result<()> {
+    if let tauri::ipc::InvokeBody::Raw(bytes) = request.body() {
+        if let Some(ch) = hub.0.lock().unwrap().as_ref() {
+            let _ = ch.send(InvokeResponseBody::Raw(bytes.clone()));
+        }
+    }
+    Ok(())
+}
 
 /// Opens a native open-file dialog (filtered to glb) and returns the
 /// chosen file's bytes. The frontend never supplies a path.
@@ -57,11 +85,17 @@ async fn export_output(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(FrameHub::default())
         .on_permission_request(|_webview, kind| match kind {
             PermissionKind::Camera => PermissionResponse::Allow,
             _ => PermissionResponse::Default,
         })
-        .invoke_handler(tauri::generate_handler![import_model, export_output])
+        .invoke_handler(tauri::generate_handler![
+            import_model,
+            export_output,
+            subscribe_frames,
+            push_frame
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

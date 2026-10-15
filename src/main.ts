@@ -16,9 +16,18 @@ import { ensureSegmenter, getSegmenter, SelfieMask } from './tracking/segmenter'
 import { AvatarController } from './avatar/avatarController'
 import { CompositeRenderer } from './compose/composite'
 import { OutputRenderer } from './compose/output'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { isRecording, screenshot, startRecording, stopRecording } from './export/recorder'
-import { exportOutput, importModel } from './lib/tauri'
+import { exportOutput, importModel, pushFrame } from './lib/tauri'
+import { hidePip, isPipVisible, showPip } from './pip/pipWindow'
 import { createControls, type HarnessControls } from './ui/controls'
+
+function isTauri(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+/** Frame pushes to the PiP window are throttled to ~12 fps. */
+const PIP_INTERVAL_MS = 1000 / 12
 
 interface LastFrame {
   landmarks: NormalizedLandmark[] | undefined
@@ -74,6 +83,63 @@ function main(): void {
   let segTick = 0
   /** Object URL for a custom GLB chosen before the avatar was initialized. */
   let pendingModelPath: string | null = null
+
+  // ---- PiP output window ----
+  let minimized = false
+  let pipPushPending = false
+  let lastPipPush = 0
+
+  /** Show the PiP only while the main window is minimized and it is enabled. */
+  function syncPip(): void {
+    if (minimized && controls.pipEnabled) void showPip()
+    else void hidePip()
+  }
+
+  /** Throttled JPEG snapshot of the output canvas, forwarded to the PiP window. */
+  function pushPipFrame(): void {
+    if (!isPipVisible() || pipPushPending) return
+    const now = performance.now()
+    if (now - lastPipPush < PIP_INTERVAL_MS) return
+    lastPipPush = now
+    pipPushPending = true
+    try {
+      outCanvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            pipPushPending = false
+            return
+          }
+          blob
+            .arrayBuffer()
+            .then((buf) => pushFrame(new Uint8Array(buf)))
+            .catch((error: unknown) => console.warn('[pip] push failed:', error))
+            .finally(() => {
+              pipPushPending = false
+            })
+        },
+        'image/jpeg',
+        0.7,
+      )
+    } catch (error) {
+      pipPushPending = false
+      console.warn('[pip] snapshot failed:', error)
+    }
+  }
+
+  /** Watch the main window's minimized state and keep the PiP in sync. */
+  function watchMinimized(): void {
+    if (!isTauri()) return
+    const win = getCurrentWindow()
+    const sync = (): void => {
+      void win.isMinimized().then((next) => {
+        if (next === minimized) return
+        minimized = next
+        syncPip()
+      })
+    }
+    void win.onResized(sync)
+    void win.onFocusChanged(sync)
+  }
 
   // ---- settings / redraw ----
   function applyDrawSettings(): void {
@@ -365,7 +431,17 @@ function main(): void {
     updateStats(result)
     lastFrame = { landmarks, w, h }
 
-    requestAnimationFrame(loop)
+    pushPipFrame()
+    scheduleNext()
+  }
+
+  /**
+   * rAF pauses while the WebView2 window is minimized, so fall back to a timer
+   * at a low rate in that state to keep the PiP feed alive.
+   */
+  function scheduleNext(): void {
+    if (minimized) window.setTimeout(loop, 1000 / 12)
+    else requestAnimationFrame(loop)
   }
 
   controls = createControls(controlsContainer, preview, {
@@ -379,11 +455,13 @@ function main(): void {
     onToggleRecord: toggleRecord,
     onScreenshot: takeScreenshot,
     onImportModel: importCustomModel,
+    onTogglePip: syncPip,
   })
   controls.attachSelectionDrag(compCanvas)
   controls.setRunning(false)
   controls.setStatus('idle')
   applyDrawSettings()
+  watchMinimized()
 }
 
 try {

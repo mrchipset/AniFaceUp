@@ -46,6 +46,8 @@ export interface ControlsCallbacks {
   onScreenshot(): void
   /** Import-model button pressed — open the native GLB picker. */
   onImportModel(): void
+  /** The "output window when minimized" checkbox changed. */
+  onTogglePip(): void
 }
 
 interface RangeSpec {
@@ -134,6 +136,10 @@ export class HarnessControls {
 
   get blurOn(): boolean {
     return this.check('blur_on')
+  }
+
+  get pipEnabled(): boolean {
+    return this.check('pip_on')
   }
 
   get blurInvert(): boolean {
@@ -336,6 +342,7 @@ export class HarnessControls {
   private captureSection(): HTMLElement {
     return this.section('Capture', (body) => {
       body.append(this.row([this.startBtn, this.stopBtn]))
+      body.append(this.row([this.checkbox('pip_on', 'output window when minimized', false)], 'wrap'))
     })
   }
 
@@ -611,6 +618,10 @@ export class HarnessControls {
     if (key === 'blur_on') {
       if (this.check('blur_on')) this.callbacks.onBlurEnable()
       this.callbacks.onRefresh()
+      return
+    }
+    if (key === 'pip_on') {
+      this.callbacks.onTogglePip()
       return
     }
     this.callbacks.onRefresh()

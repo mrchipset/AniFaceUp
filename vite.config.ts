@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 
 const host = process.env.TAURI_DEV_HOST;
@@ -16,5 +17,11 @@ export default defineConfig(async () => ({
     target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
     minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        pip: resolve(__dirname, 'pip.html'),
+      },
+    },
   },
 }));
