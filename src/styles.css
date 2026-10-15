@@ -302,23 +302,20 @@ dt {
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 20px;
   min-height: 0;
   padding: 20px;
 }
 
+/* The stage never scrolls; the composite always fits inside it. */
 .stage {
   display: flex;
   flex-direction: column;
   gap: 16px;
   min-height: 0;
   min-width: 0;
-  overflow-y: auto;
-}
-
-/* Monitors keep their natural size; the stage scrolls instead of squashing. */
-.stage > * {
-  flex: 0 0 auto;
+  overflow: hidden;
 }
 
 /* monitors */
@@ -327,11 +324,20 @@ dt {
   min-width: 0;
 }
 
+/* The primary composite monitor claims all leftover height in the stage. */
+.monitor-primary {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .monitor-bar {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  flex: 0 0 auto;
   margin-bottom: 8px;
 }
 
@@ -365,13 +371,15 @@ dt {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+  flex: 0 0 auto;
 }
 
+/* Tiles give back space as the window shortens (then hide — see max-height rules). */
 .monitor-row .frame {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 168px;
+  height: clamp(84px, 19vh, 168px);
 }
 
 .monitor-row .frame > canvas {
@@ -380,14 +388,29 @@ dt {
   object-fit: contain;
 }
 
+/*
+ * Primary frame: a centred region that fills the leftover height. The composite
+ * scales to fit whatever room is left — any aspect ratio, no distortion — and is
+ * capped on both axes so it can never push past the stage. Sized with intrinsic
+ * auto height so the drawing buffer (camera resolution) keeps its true ratio,
+ * which also keeps drag-to-select coordinates exact.
+ */
 .frame-primary {
-  display: block;
-  height: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.frame.frame-primary > canvas {
-  width: 100%;
+.frame-primary > #composite {
+  display: block;
+  width: auto;
   height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 #composite {
@@ -396,6 +419,13 @@ dt {
 
 .frame-flip.mirror {
   transform: scaleX(-1);
+}
+
+/* Cramped windows: drop the three tiles so the composite keeps every pixel. */
+@media (max-height: 560px) {
+  .monitor-row {
+    display: none;
+  }
 }
 
 /* ------------------------------------------------------------- control rail */
@@ -670,27 +700,23 @@ input[type="range"]::-moz-range-thumb {
 
 /* ----------------------------------------------------------------- scroll */
 
-.rail::-webkit-scrollbar,
-.stage::-webkit-scrollbar {
+.rail::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
-.rail::-webkit-scrollbar-track,
-.stage::-webkit-scrollbar-track {
+.rail::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.rail::-webkit-scrollbar-thumb,
-.stage::-webkit-scrollbar-thumb {
+.rail::-webkit-scrollbar-thumb {
   background: var(--line-2);
   background-clip: padding-box;
   border: 3px solid transparent;
   border-radius: 999px;
 }
 
-.rail::-webkit-scrollbar-thumb:hover,
-.stage::-webkit-scrollbar-thumb:hover {
+.rail::-webkit-scrollbar-thumb:hover {
   background: var(--ink-4);
   background-clip: padding-box;
 }
@@ -797,6 +823,23 @@ input[type="range"]::-moz-range-thumb {
   .stage,
   .rail {
     overflow: visible;
+  }
+
+  /*
+   * Stacked layout: the app is no longer a fixed viewport, so the stage has no
+   * definite height to fill. Release the flex-fill contract and fall back to the
+   * composite's intrinsic ratio (full width, height follows) like the tiles.
+   */
+  .monitor-primary,
+  .frame-primary {
+    flex: 0 0 auto;
+  }
+
+  .frame-primary > #composite {
+    width: 100%;
+    height: auto;
+    max-width: none;
+    max-height: none;
   }
 }
 
