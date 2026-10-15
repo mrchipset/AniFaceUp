@@ -11,7 +11,7 @@
   },
   "app": {
     "windows": [
-      { "title": "AniFaceUp", "width": 1280, "height": 800, "resizable": true, "fullscreen": false, "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows" }
+      { "title": "AniFaceUp", "width": 1280, "height": 800, "resizable": true, "fullscreen": false }
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost blob: data:; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; font-src 'self' data:",
