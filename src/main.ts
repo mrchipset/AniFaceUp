@@ -16,6 +16,8 @@ import { ensureSegmenter, getSegmenter, SelfieMask } from './tracking/segmenter'
 import { AvatarController } from './avatar/avatarController'
 import { CompositeRenderer } from './compose/composite'
 import { OutputRenderer } from './compose/output'
+import { isRecording, screenshot, startRecording, stopRecording } from './export/recorder'
+import { exportOutput, importModel } from './lib/tauri'
 import { createControls, type HarnessControls } from './ui/controls'
 
 interface LastFrame {
@@ -70,6 +72,8 @@ function main(): void {
   let lastFrame: LastFrame | null = null
   let lastDetectMs = 0
   let segTick = 0
+  /** Object URL for a custom GLB chosen before the avatar was initialized. */
+  let pendingModelPath: string | null = null
 
   // ---- settings / redraw ----
   function applyDrawSettings(): void {
@@ -118,6 +122,70 @@ function main(): void {
     refresh()
   }
 
+  // ---- record / export / import ----
+
+  function timestamp(): string {
+    return new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '')
+  }
+
+  function errMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
+  }
+
+  async function saveBlob(blob: Blob, name: string, label: string): Promise<void> {
+    try {
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      const saved = await exportOutput(bytes, name)
+      controls.showToast(saved ? `${label} saved` : 'save cancelled', saved ? 'success' : undefined)
+    } catch (error) {
+      controls.showToast(`${label} failed: ${errMessage(error)}`, 'error')
+    }
+  }
+
+  function toggleRecord(): void {
+    if (!isRecording()) {
+      try {
+        startRecording(outCanvas)
+        controls.setRecording(true)
+        controls.showToast('recording…')
+      } catch (error) {
+        controls.setRecording(false)
+        controls.showToast(`recording failed: ${errMessage(error)}`, 'error')
+      }
+      return
+    }
+    void stopRecording().then((blob) => {
+      controls.setRecording(false)
+      if (!blob) {
+        controls.showToast('recording failed', 'error')
+        return
+      }
+      void saveBlob(blob, `anifaceup-${timestamp()}.webm`, 'recording')
+    })
+  }
+
+  function takeScreenshot(): void {
+    void screenshot(outCanvas)
+      .then((blob) => saveBlob(blob, `anifaceup-${timestamp()}.png`, 'screenshot'))
+      .catch((error: unknown) => controls.showToast(`screenshot failed: ${errMessage(error)}`, 'error'))
+  }
+
+  function importCustomModel(): void {
+    void importModel()
+      .then(async (buf) => {
+        if (!buf) return
+        const url = URL.createObjectURL(new Blob([buf], { type: 'model/gltf-binary' }))
+        if (avatar.initialized) {
+          await avatar.loadModel(url)
+          controls.showToast('model imported', 'success')
+        } else {
+          pendingModelPath = url
+          controls.showToast('model staged — start camera to apply', 'success')
+        }
+      })
+      .catch((error: unknown) => controls.showToast(`import failed: ${errMessage(error)}`, 'error'))
+  }
+
   async function enableBlur(): Promise<void> {
     if (getSegmenter()) return
     controls.setStatus('loading segmentation model…')
@@ -140,7 +208,8 @@ function main(): void {
       const label = await camera.start()
       controls.setDevice(label)
       controls.setStatus('loading avatar model…')
-      await avatar.init(AVATAR_MODEL)
+      await avatar.init(pendingModelPath ?? AVATAR_MODEL)
+      pendingModelPath = null
       controls.setStatus('initializing face tracker…')
       await ensureLandmarker()
       running = true
@@ -280,6 +349,9 @@ function main(): void {
     onExpression: applyExpression,
     onResetView: resetView,
     onBlurEnable: () => void enableBlur(),
+    onToggleRecord: toggleRecord,
+    onScreenshot: takeScreenshot,
+    onImportModel: importCustomModel,
   })
   controls.attachSelectionDrag(compCanvas)
   controls.setRunning(false)

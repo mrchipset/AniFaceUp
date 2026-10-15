@@ -1,9 +1,11 @@
 /**
- * Functional (plain, unstyled) harness controls.
+ * Control panel: builds the rail UI, owns the UI-bound state (composite /
+ * selection / transform / expression / toggles) and reports changes through
+ * callbacks.
  *
- * Builds the entire control panel into a container, owns the UI-bound state
- * (composite / selection / transform / expression / toggles) and reports
- * changes through callbacks. No visual design here — P4 restyles the UI.
+ * This module is view-only: the engine (src/main.ts and the modules under
+ * camera/ tracking/ avatar/ compose/ export/) reads the getters and reacts to
+ * the callbacks. No rendering logic lives here.
  */
 import {
   BLUR_DEFAULT_PX,
@@ -38,6 +40,12 @@ export interface ControlsCallbacks {
   onResetView(): void
   /** Background blur was enabled — lazily load the segmenter. */
   onBlurEnable(): void
+  /** Record button toggled (start when idle, stop + save when active). */
+  onToggleRecord(): void
+  /** Screenshot button pressed — save a PNG of the output. */
+  onScreenshot(): void
+  /** Import-model button pressed — open the native GLB picker. */
+  onImportModel(): void
 }
 
 interface RangeSpec {
@@ -52,29 +60,60 @@ interface RangeSpec {
 
 type RangeKind = 'refresh' | 'transform' | 'expression'
 
+type StatusState = 'idle' | 'warn' | 'ok' | 'err'
+
+const PLACEHOLDER = '\u2014' // em dash
+
+/** Map a free-text status line onto a status-dot colour. */
+function statusState(text: string): StatusState {
+  const t = text.toLowerCase()
+  if (/fail|error|denied|unavailable|unusable|problem|blocked/.test(t)) return 'err'
+  if (/ready|running|active|complete|saved/.test(t)) return 'ok'
+  if (/load|request|init|start|wait|prepar/.test(t)) return 'warn'
+  return 'idle'
+}
+
 export class HarnessControls {
   private readonly inputs = new Map<string, HTMLInputElement | HTMLSelectElement>()
   private readonly readouts = new Map<string, HTMLElement>()
-  private readonly statusEl = document.createElement('span')
+  private readonly statusLine = document.createElement('div')
+  private readonly statusText = document.createElement('span')
+  private readonly statusDevice = document.createElement('span')
   private readonly resEl = document.createElement('span')
   private readonly fpsEl = document.createElement('span')
   private readonly latEl = document.createElement('span')
   private readonly faceEl = document.createElement('span')
   private readonly ptsEl = document.createElement('span')
-  private readonly devEl = document.createElement('span')
+  private readonly devStatEl = document.createElement('span')
   private readonly startBtn = document.createElement('button')
   private readonly stopBtn = document.createElement('button')
+  private readonly recordBtn = document.getElementById('btn-record')
+  private readonly screenshotBtn = document.getElementById('btn-screenshot')
+  private readonly importBtn = document.getElementById('btn-import-model')
+  private readonly toastEl = document.getElementById('toast')
+  private toastTimer: number | null = null
   private readonly callbacks: ControlsCallbacks
   private readonly preview: HTMLElement | null
 
   constructor(container: HTMLElement, preview: HTMLElement | null, callbacks: ControlsCallbacks) {
     this.callbacks = callbacks
     this.preview = preview
+
+    this.startBtn.type = 'button'
+    this.startBtn.className = 'btn btn-primary'
     this.startBtn.textContent = 'Start camera'
+    this.stopBtn.type = 'button'
+    this.stopBtn.className = 'btn'
     this.stopBtn.textContent = 'Stop'
     this.startBtn.addEventListener('click', () => this.callbacks.onStartCamera())
     this.stopBtn.addEventListener('click', () => this.callbacks.onStopCamera())
+    this.recordBtn?.addEventListener('click', () => this.callbacks.onToggleRecord())
+    this.screenshotBtn?.addEventListener('click', () => this.callbacks.onScreenshot())
+    this.importBtn?.addEventListener('click', () => this.callbacks.onImportModel())
+
+    this.buildStatusLine()
     this.build(container)
+
     // Composite defaults to mirrored, so the preview must match at boot.
     this.preview?.classList.toggle('mirror', this.check('c_mirror'))
   }
@@ -177,32 +216,56 @@ export class HarnessControls {
     this.stopBtn.disabled = !running
   }
 
+  /** Reflect the recording state on the record button (class + aria). */
+  setRecording(active: boolean): void {
+    this.recordBtn?.classList.toggle('is-recording', active)
+    this.recordBtn?.setAttribute('aria-pressed', active ? 'true' : 'false')
+  }
+
+  /** Show a transient toast; auto-hides after ~2.5s. */
+  showToast(message: string, kind?: 'success' | 'error'): void {
+    const el = this.toastEl
+    if (!el) return
+    el.textContent = message
+    if (kind) el.dataset.kind = kind
+    else delete el.dataset.kind
+    el.classList.add('is-visible')
+    if (this.toastTimer !== null) window.clearTimeout(this.toastTimer)
+    this.toastTimer = window.setTimeout(() => {
+      el.classList.remove('is-visible')
+      this.toastTimer = null
+    }, 2500)
+  }
+
   setStatus(text: string): void {
-    this.statusEl.textContent = text
+    this.statusText.textContent = text
+    this.statusLine.dataset.state = statusState(text)
   }
 
   setDevice(label: string): void {
-    this.devEl.textContent = label
+    this.statusDevice.textContent = label
+    this.devStatEl.textContent = label
   }
 
   setResolution(w: number, h: number): void {
-    this.resEl.textContent = w && h ? `${w}x${h}` : '-'
+    this.resEl.textContent = w && h ? `${w}\u00d7${h}` : PLACEHOLDER
   }
 
   setStats(fps: number, detectionMs: number, faceFound: boolean, points: number): void {
-    this.fpsEl.textContent = fps.toFixed(1) + ' fps'
+    this.fpsEl.textContent = fps.toFixed(1)
     this.latEl.textContent = detectionMs.toFixed(0) + ' ms'
     this.faceEl.textContent = faceFound ? 'yes' : 'no'
-    this.ptsEl.textContent = faceFound ? points + ' pts' : '-'
+    this.ptsEl.textContent = faceFound ? String(points) : PLACEHOLDER
   }
 
   resetStats(): void {
-    this.resEl.textContent = '-'
-    this.fpsEl.textContent = '-'
-    this.latEl.textContent = '-'
-    this.faceEl.textContent = '-'
-    this.ptsEl.textContent = '-'
-    this.devEl.textContent = '-'
+    this.resEl.textContent = PLACEHOLDER
+    this.fpsEl.textContent = PLACEHOLDER
+    this.latEl.textContent = PLACEHOLDER
+    this.faceEl.textContent = PLACEHOLDER
+    this.ptsEl.textContent = PLACEHOLDER
+    this.devStatEl.textContent = PLACEHOLDER
+    this.statusDevice.textContent = PLACEHOLDER
   }
 
   /** Wire drag-to-move selection directly on the composite view. */
@@ -234,107 +297,139 @@ export class HarnessControls {
 
   // ---- DOM construction ----
 
+  private buildStatusLine(): void {
+    const dot = document.createElement('span')
+    dot.className = 'status-dot'
+    dot.setAttribute('aria-hidden', 'true')
+    const sep = document.createElement('span')
+    sep.className = 'status-sep'
+    sep.setAttribute('aria-hidden', 'true')
+    sep.textContent = '/'
+
+    this.statusText.className = 'status-text'
+    this.statusText.textContent = 'idle'
+    this.statusDevice.className = 'status-device'
+    this.statusDevice.textContent = PLACEHOLDER
+
+    this.statusLine.className = 'status-line'
+    this.statusLine.dataset.state = 'idle'
+    this.statusLine.append(dot, this.statusText, sep, this.statusDevice)
+  }
+
   private build(container: HTMLElement): void {
+    const statusHost = document.getElementById('appbar-status')
+    if (statusHost) statusHost.append(this.statusLine)
+    else container.append(this.statusLine)
+
     container.append(
-      this.cameraSection(),
+      this.captureSection(),
+      this.trackingSection(),
+      this.backgroundSection(),
       this.compositeSection(),
       this.selectionSection(),
       this.transformSection(),
       this.expressionSection(),
+      this.telemetrySection(),
     )
   }
 
-  private cameraSection(): HTMLElement {
-    const section = this.section('Camera')
-    section.append(this.row(this.startBtn, this.stopBtn))
-    section.append(
-      this.row(
-        this.checkbox('c_lm', 'landmarks', true, true),
-        this.checkbox('c_mesh', 'mesh', false, true),
-        this.checkbox('c_mirror', 'mirror', true, false),
-      ),
-    )
-    section.append(
-      this.row(
-        this.checkbox('blur_on', 'background blur', false, false),
-        this.checkbox('blur_invert', 'invert mask', false, true),
-      ),
-    )
-    section.append(this.rangeRow({ key: 'blur_px', label: 'blur px', min: BLUR_MIN_PX, max: BLUR_MAX_PX, step: 1, value: BLUR_DEFAULT_PX, decimals: 0 }, 'refresh'))
-    section.append(
-      this.statsRow('resolution', this.resEl),
-      this.statsRow('fps', this.fpsEl),
-      this.statsRow('detection', this.latEl),
-      this.statsRow('face', this.faceEl),
-      this.statsRow('points', this.ptsEl),
-      this.statsRow('device', this.devEl),
-    )
-    section.append(this.row(this.statusEl))
-    return section
+  private captureSection(): HTMLElement {
+    return this.section('Capture', (body) => {
+      body.append(this.row([this.startBtn, this.stopBtn]))
+    })
+  }
+
+  private trackingSection(): HTMLElement {
+    return this.section('Tracking', (body) => {
+      body.append(
+        this.row([this.checkbox('c_lm', 'landmarks', true), this.checkbox('c_mesh', 'mesh', false), this.checkbox('c_mirror', 'mirror', true)], 'wrap'),
+      )
+    })
+  }
+
+  private backgroundSection(): HTMLElement {
+    return this.section('Background blur', (body) => {
+      body.append(this.row([this.checkbox('blur_on', 'enabled', false), this.checkbox('blur_invert', 'invert mask', false)], 'wrap'))
+      body.append(
+        this.rangeRow({ key: 'blur_px', label: 'blur', min: BLUR_MIN_PX, max: BLUR_MAX_PX, step: 1, value: BLUR_DEFAULT_PX, decimals: 0 }, 'refresh'),
+      )
+    })
   }
 
   private compositeSection(): HTMLElement {
-    const section = this.section('Composite')
-    section.append(this.checkbox('cp_on', 'composite', true, false))
-    section.append(this.rangeRow({ key: 'cp_size', label: 'size', min: 0.2, max: 4, step: 0.01, value: COMPOSITE_DEFAULTS.size, decimals: 2 }, 'refresh'))
-    section.append(this.rangeRow({ key: 'cp_dx', label: 'offset x', min: -0.6, max: 0.6, step: 0.005, value: COMPOSITE_DEFAULTS.dx, decimals: 3 }, 'refresh'))
-    section.append(this.rangeRow({ key: 'cp_dy', label: 'offset y', min: -0.6, max: 0.6, step: 0.005, value: COMPOSITE_DEFAULTS.dy, decimals: 3 }, 'refresh'))
-    const reset = this.button('reset composite', () => {
-      this.setInputValue('cp_size', COMPOSITE_DEFAULTS.size)
-      this.setInputValue('cp_dx', COMPOSITE_DEFAULTS.dx)
-      this.setInputValue('cp_dy', COMPOSITE_DEFAULTS.dy)
-      this.callbacks.onRefresh()
-    }, true)
-    section.append(this.row(reset))
-    return section
+    return this.section('Composite', (body) => {
+      body.append(this.row([this.checkbox('cp_on', 'enabled', true)], 'wrap'))
+      body.append(
+        this.rangeRow({ key: 'cp_size', label: 'size', min: 0.2, max: 4, step: 0.01, value: COMPOSITE_DEFAULTS.size, decimals: 2 }, 'refresh'),
+        this.rangeRow({ key: 'cp_dx', label: 'offset x', min: -0.6, max: 0.6, step: 0.005, value: COMPOSITE_DEFAULTS.dx, decimals: 3 }, 'refresh'),
+        this.rangeRow({ key: 'cp_dy', label: 'offset y', min: -0.6, max: 0.6, step: 0.005, value: COMPOSITE_DEFAULTS.dy, decimals: 3 }, 'refresh'),
+      )
+      body.append(
+        this.actionRow(
+          this.button('Reset composite', () => {
+            this.setInputValue('cp_size', COMPOSITE_DEFAULTS.size)
+            this.setInputValue('cp_dx', COMPOSITE_DEFAULTS.dx)
+            this.setInputValue('cp_dy', COMPOSITE_DEFAULTS.dy)
+            this.callbacks.onRefresh()
+          }),
+        ),
+      )
+    })
   }
 
   private selectionSection(): HTMLElement {
-    const section = this.section('Output selection')
-    section.append(this.rangeRow({ key: 'sel_w', label: 'width', min: 50, max: 1920, step: 1, value: SELECTION_DEFAULTS.w, decimals: 0 }, 'refresh'))
-    section.append(this.rangeRow({ key: 'sel_h', label: 'height', min: 50, max: 1920, step: 1, value: SELECTION_DEFAULTS.h, decimals: 0 }, 'refresh'))
-    section.append(this.rangeRow({ key: 'sel_x', label: 'position x', min: 0, max: 1, step: 0.001, value: SELECTION_DEFAULTS.cx, decimals: 3 }, 'refresh'))
-    section.append(this.rangeRow({ key: 'sel_y', label: 'position y', min: 0, max: 1, step: 0.001, value: SELECTION_DEFAULTS.cy, decimals: 3 }, 'refresh'))
-    section.append(this.rangeRow({ key: 'sel_mul', label: 'multiplier', min: 0.25, max: 4, step: 0.05, value: SELECTION_DEFAULTS.mul, decimals: 2 }, 'refresh'))
-    section.append(
-      this.selectRow(
-        'sel_mask',
-        'mask',
-        [
-          ['none', 'none'],
-          ['round', 'rounded'],
-          ['circle', 'circle'],
-        ],
-        SELECTION_DEFAULTS.mask,
-      ),
-    )
-    section.append(this.rangeRow({ key: 'sel_radius', label: 'radius %', min: 0, max: 50, step: 1, value: SELECTION_DEFAULTS.radius, decimals: 0 }, 'refresh'))
-    section.append(this.rangeRow({ key: 'sel_feather', label: 'feather', min: 0, max: 30, step: 1, value: SELECTION_DEFAULTS.feather, decimals: 0 }, 'refresh'))
-    const reset = this.button('reset selection', () => {
-      this.setSelection(SELECTION_DEFAULTS)
-      this.callbacks.onRefresh()
-    }, true)
-    section.append(this.row(reset))
-    return section
+    return this.section('Output selection', (body) => {
+      body.append(
+        this.rangeRow({ key: 'sel_w', label: 'width', min: 50, max: 1920, step: 1, value: SELECTION_DEFAULTS.w, decimals: 0 }, 'refresh'),
+        this.rangeRow({ key: 'sel_h', label: 'height', min: 50, max: 1920, step: 1, value: SELECTION_DEFAULTS.h, decimals: 0 }, 'refresh'),
+        this.rangeRow({ key: 'sel_x', label: 'position x', min: 0, max: 1, step: 0.001, value: SELECTION_DEFAULTS.cx, decimals: 3 }, 'refresh'),
+        this.rangeRow({ key: 'sel_y', label: 'position y', min: 0, max: 1, step: 0.001, value: SELECTION_DEFAULTS.cy, decimals: 3 }, 'refresh'),
+        this.rangeRow({ key: 'sel_mul', label: 'multiplier', min: 0.25, max: 4, step: 0.05, value: SELECTION_DEFAULTS.mul, decimals: 2 }, 'refresh'),
+        this.selectRow(
+          'sel_mask',
+          'mask',
+          [
+            ['none', 'None'],
+            ['round', 'Rounded'],
+            ['circle', 'Circle'],
+          ],
+          SELECTION_DEFAULTS.mask,
+        ),
+        this.rangeRow({ key: 'sel_radius', label: 'radius %', min: 0, max: 50, step: 1, value: SELECTION_DEFAULTS.radius, decimals: 0 }, 'refresh'),
+        this.rangeRow({ key: 'sel_feather', label: 'feather', min: 0, max: 30, step: 1, value: SELECTION_DEFAULTS.feather, decimals: 0 }, 'refresh'),
+      )
+      body.append(
+        this.actionRow(
+          this.button('Reset selection', () => {
+            this.setSelection(SELECTION_DEFAULTS)
+            this.callbacks.onRefresh()
+          }),
+        ),
+      )
+    })
   }
 
   private transformSection(): HTMLElement {
-    const section = this.section('Model transform')
-    section.append(this.rangeRow({ key: 't_scale', label: 'scale', min: 0.1, max: 8, step: 0.01, value: TRANSFORM_DEFAULTS.scale, decimals: 2 }, 'transform'))
-    section.append(this.rangeRow({ key: 't_x', label: 'x', min: -6, max: 6, step: 0.01, value: TRANSFORM_DEFAULTS.x, decimals: 2 }, 'transform'))
-    section.append(this.rangeRow({ key: 't_y', label: 'y', min: -6, max: 6, step: 0.01, value: TRANSFORM_DEFAULTS.y, decimals: 2 }, 'transform'))
-    section.append(this.rangeRow({ key: 't_z', label: 'z', min: -6, max: 6, step: 0.01, value: TRANSFORM_DEFAULTS.z, decimals: 2 }, 'transform'))
-    const reset = this.button('reset transform', () => {
-      this.setTransformInputs(TRANSFORM_DEFAULTS)
-      this.callbacks.onTransform()
-    }, true)
-    const resetView = this.button('reset view', () => this.callbacks.onResetView(), true)
-    section.append(this.row(reset, resetView))
-    return section
+    return this.section('Model transform', (body) => {
+      body.append(
+        this.rangeRow({ key: 't_scale', label: 'scale', min: 0.1, max: 8, step: 0.01, value: TRANSFORM_DEFAULTS.scale, decimals: 2 }, 'transform'),
+        this.rangeRow({ key: 't_x', label: 'x', min: -6, max: 6, step: 0.01, value: TRANSFORM_DEFAULTS.x, decimals: 2 }, 'transform'),
+        this.rangeRow({ key: 't_y', label: 'y', min: -6, max: 6, step: 0.01, value: TRANSFORM_DEFAULTS.y, decimals: 2 }, 'transform'),
+        this.rangeRow({ key: 't_z', label: 'z', min: -6, max: 6, step: 0.01, value: TRANSFORM_DEFAULTS.z, decimals: 2 }, 'transform'),
+      )
+      body.append(
+        this.actionRow(
+          this.button('Reset transform', () => {
+            this.setTransformInputs(TRANSFORM_DEFAULTS)
+            this.callbacks.onTransform()
+          }),
+          this.button('Reset view', () => this.callbacks.onResetView()),
+        ),
+      )
+    })
   }
 
   private expressionSection(): HTMLElement {
-    const section = this.section('Manual expression')
     const specs: RangeSpec[] = [
       { key: 's_jaw', label: 'jawOpen', min: 0, max: 1, step: 0.01, value: 0, decimals: 2 },
       { key: 's_blink', label: 'eyeBlinkLeft', min: 0, max: 1, step: 0.01, value: 0, decimals: 2 },
@@ -343,62 +438,92 @@ export class HarnessControls {
       { key: 's_tongue', label: 'tongueOut', min: 0, max: 1, step: 0.01, value: 0, decimals: 2 },
       { key: 's_yaw', label: 'headYaw', min: -1, max: 1, step: 0.01, value: 0, decimals: 2 },
     ]
-    for (const spec of specs) section.append(this.rangeRow(spec, 'expression'))
-    return section
+    return this.section('Manual expression', (body) => {
+      for (const spec of specs) body.append(this.rangeRow(spec, 'expression'))
+    })
+  }
+
+  private telemetrySection(): HTMLElement {
+    return this.section('Telemetry', (body) => {
+      const list = document.createElement('dl')
+      list.className = 'telemetry'
+      list.append(
+        this.telemetryItem('resolution', this.resEl),
+        this.telemetryItem('fps', this.fpsEl),
+        this.telemetryItem('detection', this.latEl),
+        this.telemetryItem('face', this.faceEl),
+        this.telemetryItem('points', this.ptsEl),
+        this.telemetryItem('device', this.devStatEl),
+      )
+      body.append(list)
+    })
   }
 
   // ---- element helpers ----
 
-  private section(title: string): HTMLElement {
+  private section(title: string, build: (body: HTMLElement) => void): HTMLElement {
     const el = document.createElement('section')
-    el.className = 'panel-section'
-    const heading = document.createElement('h2')
+    el.className = 'ctl-section'
+    const heading = document.createElement('h3')
+    heading.className = 'ctl-title'
     heading.textContent = title
-    el.append(heading)
+    const body = document.createElement('div')
+    body.className = 'ctl-body'
+    build(body)
+    el.append(heading, body)
     return el
   }
 
-  private row(...children: HTMLElement[]): HTMLElement {
+  private row(children: HTMLElement[], extraClass?: string): HTMLElement {
     const el = document.createElement('div')
-    el.className = 'panel-row'
+    el.className = 'ctl-row' + (extraClass ? ' ' + extraClass : '')
     el.append(...children)
     return el
   }
 
-  private statsRow(label: string, value: HTMLElement): HTMLElement {
+  private actionRow(...children: HTMLElement[]): HTMLElement {
     const el = document.createElement('div')
-    el.className = 'panel-row'
-    const name = document.createElement('span')
-    name.textContent = label
-    el.append(name, value)
+    el.className = 'ctl-row actions'
+    el.append(...children)
     return el
   }
 
-  private button(label: string, onClick: () => void, ghost = false): HTMLButtonElement {
+  private button(label: string, onClick: () => void): HTMLButtonElement {
     const el = document.createElement('button')
     el.type = 'button'
+    el.className = 'btn btn-quiet'
     el.textContent = label
-    if (ghost) el.className = 'ghost'
     el.addEventListener('click', onClick)
     return el
   }
 
-  private checkbox(key: string, label: string, checked: boolean, light: boolean): HTMLLabelElement {
+  private checkbox(key: string, label: string, checked: boolean): HTMLLabelElement {
     const wrap = document.createElement('label')
+    wrap.className = 'switch'
     const input = document.createElement('input')
     input.type = 'checkbox'
+    input.className = 'switch-input'
     input.checked = checked
     input.addEventListener('change', () => this.onToggle(key))
+    const track = document.createElement('span')
+    track.className = 'switch-track'
+    track.setAttribute('aria-hidden', 'true')
+    const knob = document.createElement('span')
+    knob.className = 'switch-knob'
+    track.append(knob)
+    const text = document.createElement('span')
+    text.className = 'switch-label'
+    text.textContent = label
+    wrap.append(input, track, text)
     this.inputs.set(key, input)
-    wrap.append(input, document.createTextNode(' ' + label))
-    if (light) wrap.className = 'light'
     return wrap
   }
 
   private rangeRow(spec: RangeSpec, kind: RangeKind): HTMLElement {
     const el = document.createElement('div')
-    el.className = 'panel-row'
-    const label = document.createElement('label')
+    el.className = 'ctl-row'
+    const label = document.createElement('span')
+    label.className = 'ctl-label'
     label.textContent = spec.label
     const input = document.createElement('input')
     input.type = 'range'
@@ -406,8 +531,7 @@ export class HarnessControls {
     input.max = String(spec.max)
     input.step = String(spec.step)
     input.value = String(spec.value)
-    input.title = 'wheel to adjust · Shift coarse · Alt fine'
-    input.style.cursor = 'ns-resize'
+    input.title = 'Scroll to adjust \u00b7 Shift coarse \u00b7 Alt fine'
     const value = document.createElement('span')
     value.className = 'readout'
     value.textContent = spec.value.toFixed(spec.decimals)
@@ -449,10 +573,12 @@ export class HarnessControls {
 
   private selectRow(key: string, label: string, options: Array<[string, string]>, value: string): HTMLElement {
     const el = document.createElement('div')
-    el.className = 'panel-row'
-    const name = document.createElement('label')
+    el.className = 'ctl-row'
+    const name = document.createElement('span')
+    name.className = 'ctl-label'
     name.textContent = label
     const select = document.createElement('select')
+    select.className = 'ctl-select'
     for (const [optValue, optLabel] of options) {
       const option = document.createElement('option')
       option.value = optValue
@@ -466,6 +592,16 @@ export class HarnessControls {
     return el
   }
 
+  private telemetryItem(label: string, value: HTMLElement): HTMLElement {
+    const item = document.createElement('div')
+    const dt = document.createElement('dt')
+    dt.textContent = label
+    const dd = document.createElement('dd')
+    dd.append(value)
+    item.append(dt, dd)
+    return item
+  }
+
   private onToggle(key: string): void {
     if (key === 'c_mirror') {
       this.preview?.classList.toggle('mirror', this.check('c_mirror'))
@@ -474,10 +610,6 @@ export class HarnessControls {
     }
     if (key === 'blur_on') {
       if (this.check('blur_on')) this.callbacks.onBlurEnable()
-      this.callbacks.onRefresh()
-      return
-    }
-    if (key === 'c_lm' || key === 'c_mesh') {
       this.callbacks.onRefresh()
       return
     }

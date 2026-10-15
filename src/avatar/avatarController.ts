@@ -39,6 +39,11 @@ export class AvatarController {
     return this.aniface?.ready ?? false
   }
 
+  /** Whether an `Aniface` instance exists (even if still initializing). */
+  get initialized(): boolean {
+    return this.aniface !== null
+  }
+
   async init(modelPath: string): Promise<void> {
     if (this.aniface) return
     const aniface = new Aniface({
