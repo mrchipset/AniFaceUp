@@ -1,3 +1,172 @@
-:root { color-scheme: dark; }
-* { box-sizing: border-box; }
-body { margin: 0; background: #161920; color: #cfd4dc; font-family: system-ui, "Segoe UI", sans-serif; font-size: 13px; }
+/* Plain functional harness styles — no visual design pass here (P4 restyles). */
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #161920;
+  color: #cfd4dc;
+  font-family: system-ui, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+header {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 9px 16px;
+  border-bottom: 1px solid #2b303a;
+}
+
+header h1 {
+  font-size: 15px;
+  margin: 0;
+}
+
+#diag {
+  font-size: 11px;
+  color: #8ea0c0;
+  word-break: break-all;
+}
+
+main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+  align-items: flex-start;
+}
+
+.view {
+  background: #22262e;
+  border: 1px solid #2f343d;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.view h2,
+.panel-section h2 {
+  font-size: 12px;
+  margin: 0 0 8px;
+  color: #9fb0cc;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+canvas {
+  display: block;
+  background: #0d1015;
+  border-radius: 8px;
+}
+
+#composite {
+  cursor: crosshair;
+  width: 100%;
+  height: auto;
+}
+
+#output {
+  max-width: 100%;
+  height: auto;
+}
+
+#avatar-source {
+  background: transparent;
+  margin: 0 auto;
+}
+
+#preview {
+  position: relative;
+  width: 320px;
+  background: #0d1015;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#preview.mirror {
+  transform: scaleX(-1);
+}
+
+#preview canvas#overlay {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+#controls {
+  flex: 1 1 320px;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel-section {
+  background: #22262e;
+  border: 1px solid #2f343d;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.panel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.panel-row label {
+  flex: 0 0 78px;
+  color: #9fb0cc;
+}
+
+.panel-row input[type="range"] {
+  flex: 1;
+  min-width: 40px;
+}
+
+.panel-row select {
+  background: #2b303a;
+  color: #cfd4dc;
+  border: 1px solid #3a4150;
+  border-radius: 6px;
+  padding: 2px 5px;
+}
+
+.panel-row .readout {
+  flex: 0 0 46px;
+  text-align: right;
+  color: #7f8899;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.panel-section label.light {
+  flex: 0 0 auto;
+  color: #9fb0cc;
+  font-size: 11.5px;
+}
+
+button {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: #4f7cff;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+button.ghost {
+  background: #3a4150;
+}
+
+button:disabled {
+  background: #39404d;
+  cursor: default;
+}

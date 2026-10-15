@@ -1,12 +1,34 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AniFaceUp</title>
   </head>
   <body>
-    <div id="app"></div>
+    <header>
+      <h1>AniFaceUp</h1>
+      <span id="diag">diagnostics…</span>
+    </header>
+    <main>
+      <div id="preview">
+        <video id="webcam" autoplay playsinline muted hidden></video>
+        <canvas id="overlay"></canvas>
+      </div>
+      <div class="view">
+        <h2>composite</h2>
+        <canvas id="composite" width="640" height="480"></canvas>
+      </div>
+      <div class="view">
+        <h2>output</h2>
+        <canvas id="output" width="320" height="320"></canvas>
+      </div>
+      <div class="view">
+        <h2>avatar source</h2>
+        <canvas id="avatar-source" width="240" height="240"></canvas>
+      </div>
+      <div id="controls"></div>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
