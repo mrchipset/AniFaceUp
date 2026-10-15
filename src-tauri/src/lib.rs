@@ -150,10 +150,12 @@ pub fn run() {
             let show_item = MenuItem::with_id(app, "show", "Show AniFaceUp", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
-            let icon = app
-                .default_window_icon()
-                .cloned()
-                .ok_or("missing default window icon")?;
+            // Defensive: a missing app icon should not abort startup. Skip the
+            // tray (and log) rather than propagating an error.
+            let Some(icon) = app.default_window_icon().cloned() else {
+                eprintln!("[tray] default window icon missing; skipping tray icon");
+                return Ok(());
+            };
             // The tray is cloned into the app's resource table by `build`, so it
             // stays alive for the app lifetime even after this binding drops.
             let _tray = TrayIconBuilder::with_id("main-tray")
@@ -170,10 +172,6 @@ pub fn run() {
                     TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
-                        ..
-                    }
-                    | TrayIconEvent::DoubleClick {
-                        button: MouseButton::Left,
                         ..
                     } => {
                         restore_main_window(tray.app_handle());
