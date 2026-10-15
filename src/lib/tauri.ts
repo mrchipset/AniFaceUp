@@ -8,6 +8,12 @@
  * `tauri::ipc::Response`, which resolves to an `ArrayBuffer` on the frontend.
  */
 import { Channel, invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+
+/** True when running inside a Tauri webview. */
+function isTauri(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
 
 /**
  * Open a native file dialog (glb/gltf), returning the chosen file's bytes.
@@ -51,6 +57,31 @@ export async function subscribeFrames(onFrame: (buf: ArrayBuffer) => void): Prom
  * outside Tauri.
  */
 export async function clearFrames(): Promise<void> {
-  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return
+  if (!isTauri()) return
   await invoke('clear_frames')
+}
+
+/**
+ * Ask the native side to restore (show + unminimize + focus) the main window,
+ * e.g. from the pip window's double-click. No-op outside Tauri.
+ */
+export async function restoreMain(): Promise<void> {
+  if (!isTauri()) return
+  await invoke('restore_main')
+}
+
+/** Subscribe to `tray://minimized`. Returns an unlisten fn (no-op outside Tauri). */
+export async function onTrayMinimized(cb: () => void): Promise<() => void> {
+  return listenTrayEvent('tray://minimized', cb)
+}
+
+/** Subscribe to `tray://restored`. Returns an unlisten fn (no-op outside Tauri). */
+export async function onTrayRestored(cb: () => void): Promise<() => void> {
+  return listenTrayEvent('tray://restored', cb)
+}
+
+/** Shared guarded `listen` wrapper for tray lifecycle events. */
+async function listenTrayEvent(event: string, cb: () => void): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  return listen(event, () => cb())
 }

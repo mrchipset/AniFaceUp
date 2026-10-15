@@ -16,9 +16,8 @@ import { ensureSegmenter, getSegmenter, SelfieMask } from './tracking/segmenter'
 import { AvatarController } from './avatar/avatarController'
 import { CompositeRenderer } from './compose/composite'
 import { OutputRenderer } from './compose/output'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { isRecording, screenshot, startRecording, stopRecording } from './export/recorder'
-import { exportOutput, importModel, pushFrame } from './lib/tauri'
+import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame } from './lib/tauri'
 import { hidePip, isPipVisible, showPip } from './pip/pipWindow'
 import { createControls, type HarnessControls } from './ui/controls'
 
@@ -85,13 +84,14 @@ function main(): void {
   let pendingModelPath: string | null = null
 
   // ---- PiP output window ----
-  let minimized = false
+  /** True while the main window is hidden to the tray (driven by Rust events). */
+  let trayMode = false
   let pipPushPending = false
   let lastPipPush = 0
 
-  /** Show the PiP only while the camera runs, the window is minimized and it is enabled. */
+  /** Show the PiP only while the camera runs, the window is in the tray and it is enabled. */
   function syncPip(): void {
-    if (running && minimized && controls.pipEnabled) {
+    if (running && trayMode && controls.pipEnabled) {
       void showPip().catch((error: unknown) => {
         console.error('[pip] show failed:', error)
         controls.showToast('output window failed: ' + String(error), 'error')
@@ -133,28 +133,34 @@ function main(): void {
     }
   }
 
-  /** Watch the main window's minimized state and keep the PiP in sync. */
-  function watchMinimized(): void {
+  /**
+   * Restart the frame loop on the driver appropriate to the current state. rAF
+   * pauses while the window is hidden to the tray, so on a tray transition we
+   * must explicitly cancel and reschedule — the paused loop cannot self-switch.
+   */
+  function restartLoopDriver(): void {
+    if (!running) return
+    clearLoop()
+    scheduleNext()
+  }
+
+  /**
+   * Keep the PiP in sync with the tray state, driven by the native
+   * `tray://minimized` / `tray://restored` events (minimizing now hides the
+   * window to the tray, so `isMinimized()` is no longer usable).
+   */
+  function watchTrayMode(): void {
     if (!isTauri()) return
-    const win = getCurrentWindow()
-    const sync = (): void => {
-      void win.isMinimized().then((next) => {
-        if (next === minimized) return
-        minimized = next
-        // rAF is paused while minimized, so the loop cannot switch drivers by
-        // itself. Restart it explicitly through scheduleNext() on the change.
-        if (running) {
-          clearLoop()
-          scheduleNext()
-        }
-        syncPip()
-      })
-    }
-    void win.onResized(sync)
-    void win.onFocusChanged(sync)
-    // Windows exposes no dedicated minimize event and the resize signal is
-    // unreliable, so poll the minimized state as a robust fallback.
-    window.setInterval(sync, 400)
+    void onTrayMinimized(() => {
+      trayMode = true
+      syncPip()
+      restartLoopDriver()
+    }).catch((error: unknown) => console.warn('[pip] tray-minimized subscribe failed:', error))
+    void onTrayRestored(() => {
+      trayMode = false
+      syncPip()
+      restartLoopDriver()
+    }).catch((error: unknown) => console.warn('[pip] tray-restored subscribe failed:', error))
   }
 
   // ---- settings / redraw ----
@@ -474,7 +480,7 @@ function main(): void {
   /** Schedule the next frame on the driver appropriate to the current state. */
   function scheduleNext(): void {
     clearLoop()
-    if (minimized) loopTimer = window.setTimeout(loop, 1000 / 12)
+    if (trayMode) loopTimer = window.setTimeout(loop, 1000 / 12)
     else loopRaf = requestAnimationFrame(loop)
   }
 
@@ -495,7 +501,7 @@ function main(): void {
   controls.setRunning(false)
   controls.setStatus('idle')
   applyDrawSettings()
-  watchMinimized()
+  watchTrayMode()
 }
 
 try {

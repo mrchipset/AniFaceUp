@@ -1,8 +1,10 @@
 use std::sync::Mutex;
 
 use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{PermissionKind, PermissionResponse};
-use tauri::{Manager, State, WindowEvent};
+use tauri::{Emitter, Manager, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
 /// Holds the single subscriber channel used to stream output frames from the
@@ -91,6 +93,26 @@ async fn export_output(
     Ok(true)
 }
 
+/// Un-hides/un-minimizes the main window, focuses it, and notifies the frontend.
+/// Any open pip window is hidden, since the main window now owns the view.
+fn restore_main_window(app: &tauri::AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.unminimize();
+        let _ = main.show();
+        let _ = main.set_focus();
+        let _ = main.emit("tray://restored", ());
+    }
+    if let Some(pip) = app.get_webview_window("pip") {
+        let _ = pip.hide();
+    }
+}
+
+/// Frontend-facing command to restore the main window from the tray.
+#[tauri::command]
+fn restore_main(app: tauri::AppHandle) {
+    restore_main_window(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -101,22 +123,73 @@ pub fn run() {
             _ => PermissionResponse::Default,
         })
         .on_window_event(|window, event| {
-            // When the main window is asked to close, also close the borderless
-            // pip window so the app can exit cleanly.
+            // Only the main window participates in tray/minimize behavior and
+            // owns the borderless pip window.
             if window.label() == "main" {
-                if let WindowEvent::CloseRequested { .. } = event {
-                    if let Some(pip) = window.app_handle().get_webview_window("pip") {
-                        let _ = pip.close();
+                match event {
+                    // When the main window is asked to close, also close the
+                    // borderless pip window so the app can exit cleanly.
+                    WindowEvent::CloseRequested { .. } => {
+                        if let Some(pip) = window.app_handle().get_webview_window("pip") {
+                            let _ = pip.close();
+                        }
                     }
+                    // Minimize-to-tray: hiding (rather than keeping minimized)
+                    // avoids a taskbar entry while hidden.
+                    WindowEvent::Resized(_) => {
+                        if window.is_minimized().unwrap_or(false) {
+                            let _ = window.hide();
+                            let _ = window.emit("tray://minimized", ());
+                        }
+                    }
+                    _ => {}
                 }
             }
+        })
+        .setup(|app| {
+            let show_item = MenuItem::with_id(app, "show", "Show AniFaceUp", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or("missing default window icon")?;
+            // The tray is cloned into the app's resource table by `build`, so it
+            // stays alive for the app lifetime even after this binding drops.
+            let _tray = TrayIconBuilder::with_id("main-tray")
+                .icon(icon)
+                .tooltip("AniFaceUp")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => restore_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| match event {
+                    TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    }
+                    | TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        restore_main_window(tray.app_handle());
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             import_model,
             export_output,
             subscribe_frames,
             push_frame,
-            clear_frames
+            clear_frames,
+            restore_main
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
