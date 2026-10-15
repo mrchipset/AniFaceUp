@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::webview::{PermissionKind, PermissionResponse};
-use tauri::State;
+use tauri::{Manager, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
 /// Holds the single subscriber channel used to stream output frames from the
@@ -17,12 +17,22 @@ fn subscribe_frames(on_frame: Channel<InvokeResponseBody>, hub: State<'_, FrameH
     *hub.0.lock().unwrap() = Some(on_frame);
 }
 
+/// Drops the stored pip frame channel. Called when the pip window is destroyed
+/// so later frames are not queued to a dead webview.
+#[tauri::command]
+fn clear_frames(hub: State<'_, FrameHub>) {
+    *hub.0.lock().unwrap() = None;
+}
+
 /// Relays a raw JPEG frame (sent as a raw IPC body by the main window) to the
 /// subscribed pip channel, if any. Dropped frames are ignored.
 #[tauri::command]
 fn push_frame(request: tauri::ipc::Request<'_>, hub: State<'_, FrameHub>) -> tauri::Result<()> {
     if let tauri::ipc::InvokeBody::Raw(bytes) = request.body() {
-        if let Some(ch) = hub.0.lock().unwrap().as_ref() {
+        // Clone the channel out of the mutex so `send` never runs while the
+        // guard is held (a blocked `send` must not stall subscribe/clear).
+        let channel = hub.0.lock().unwrap().clone();
+        if let Some(ch) = channel {
             let _ = ch.send(InvokeResponseBody::Raw(bytes.clone()));
         }
     }
@@ -90,11 +100,23 @@ pub fn run() {
             PermissionKind::Camera => PermissionResponse::Allow,
             _ => PermissionResponse::Default,
         })
+        .on_window_event(|window, event| {
+            // When the main window is asked to close, also close the borderless
+            // pip window so the app can exit cleanly.
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { .. } = event {
+                    if let Some(pip) = window.app_handle().get_webview_window("pip") {
+                        let _ = pip.close();
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             import_model,
             export_output,
             subscribe_frames,
-            push_frame
+            push_frame,
+            clear_frames
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -6,6 +6,7 @@
  */
 import { currentMonitor, LogicalPosition } from '@tauri-apps/api/window'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { clearFrames } from '../lib/tauri'
 
 const LABEL = 'pip'
 const WIDTH = 320
@@ -18,6 +19,17 @@ function isTauri(): boolean {
 
 let pip: WebviewWindow | null = null
 let visible = false
+/** In-flight creation promise, so concurrent callers share one window. */
+let creating: Promise<WebviewWindow | null> | null = null
+
+/** Reset module state when the pip window goes away. */
+function onPipGone(): void {
+  pip = null
+  visible = false
+  void clearFrames().catch((error: unknown) => {
+    console.warn('[pip] clearFrames failed:', error)
+  })
+}
 
 /** Anchor the window to the bottom-right of the current monitor's work area. */
 async function positionBottomRight(win: WebviewWindow): Promise<void> {
@@ -37,42 +49,70 @@ async function positionBottomRight(win: WebviewWindow): Promise<void> {
 export async function ensurePipWindow(): Promise<WebviewWindow | null> {
   if (!isTauri()) return null
   if (pip) return pip
+  if (creating) return creating
+  creating = createPipWindow().finally(() => {
+    creating = null
+  })
+  return creating
+}
+
+/** Actually create and initialise the window (single in-flight caller). */
+async function createPipWindow(): Promise<WebviewWindow | null> {
+  if (pip) return pip
 
   const existing = await WebviewWindow.getByLabel(LABEL)
   if (existing) {
     pip = existing
+    watchClose(existing)
     return pip
   }
 
-  const win = new WebviewWindow(LABEL, {
-    url: 'pip.html',
-    title: 'Output',
-    width: WIDTH,
-    height: HEIGHT,
-    decorations: false,
-    transparent: true,
-    noRedirectionBitmap: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    shadow: false,
-    focus: false,
-    visible: false,
-  })
+  let win: WebviewWindow
+  try {
+    win = new WebviewWindow(LABEL, {
+      url: 'pip.html',
+      title: 'Output',
+      width: WIDTH,
+      height: HEIGHT,
+      decorations: false,
+      transparent: true,
+      noRedirectionBitmap: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      shadow: false,
+      focus: false,
+      visible: false,
+    })
+  } catch (error) {
+    pip = null
+    throw error
+  }
   pip = win
+  watchClose(win)
 
   // Wait for creation (or failure) before positioning; the window is still
-  // hidden at this point.
-  await new Promise<void>((resolve) => {
+  // hidden at this point. Propagate creation errors so the caller can report.
+  await new Promise<void>((resolve, reject) => {
     let settled = false
-    const finish = (): void => {
+    const done = (): void => {
       if (settled) return
       settled = true
       resolve()
     }
-    void win.once('tauri://created', finish)
-    void win.once('tauri://error', finish)
-    window.setTimeout(finish, 3000)
+    const failed = (err: unknown): void => {
+      if (settled) return
+      settled = true
+      reject(err instanceof Error ? err : new Error(String(err)))
+    }
+    void win.once('tauri://created', done)
+    void win.once('tauri://error', (event: unknown) =>
+      failed(new Error('pip window creation rejected: ' + JSON.stringify(event))),
+    )
+    window.setTimeout(done, 4000)
+  }).catch((error: unknown) => {
+    pip = null
+    throw error
   })
 
   try {
@@ -83,6 +123,12 @@ export async function ensurePipWindow(): Promise<WebviewWindow | null> {
   return win
 }
 
+/** Register close/destroy handlers that reset the module state. */
+function watchClose(win: WebviewWindow): void {
+  void win.onCloseRequested(() => onPipGone())
+  void win.once('tauri://destroyed', () => onPipGone())
+}
+
 /** Show the PiP window (creating it if needed) at the bottom-right corner. */
 export async function showPip(): Promise<void> {
   if (!isTauri()) return
@@ -90,11 +136,16 @@ export async function showPip(): Promise<void> {
   if (!win) return
   try {
     await positionBottomRight(win)
-    await win.show()
-    visible = true
   } catch (error) {
-    console.warn('[pip] show failed:', error)
+    console.warn('[pip] position failed:', error)
   }
+  await win.show()
+  try {
+    await win.setAlwaysOnTop(true)
+  } catch (error) {
+    console.warn('[pip] setAlwaysOnTop failed:', error)
+  }
+  visible = true
 }
 
 /** Hide the PiP window if it exists. */

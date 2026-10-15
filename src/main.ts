@@ -89,10 +89,16 @@ function main(): void {
   let pipPushPending = false
   let lastPipPush = 0
 
-  /** Show the PiP only while the main window is minimized and it is enabled. */
+  /** Show the PiP only while the camera runs, the window is minimized and it is enabled. */
   function syncPip(): void {
-    if (minimized && controls.pipEnabled) void showPip()
-    else void hidePip()
+    if (running && minimized && controls.pipEnabled) {
+      void showPip().catch((error: unknown) => {
+        console.error('[pip] show failed:', error)
+        controls.showToast('output window failed: ' + String(error), 'error')
+      })
+    } else {
+      void hidePip()
+    }
   }
 
   /** Throttled JPEG snapshot of the output canvas, forwarded to the PiP window. */
@@ -134,11 +140,20 @@ function main(): void {
       void win.isMinimized().then((next) => {
         if (next === minimized) return
         minimized = next
+        // rAF is paused while minimized, so the loop cannot switch drivers by
+        // itself. Restart it explicitly through scheduleNext() on the change.
+        if (running) {
+          clearLoop()
+          scheduleNext()
+        }
         syncPip()
       })
     }
     void win.onResized(sync)
     void win.onFocusChanged(sync)
+    // Windows exposes no dedicated minimize event and the resize signal is
+    // unreliable, so poll the minimized state as a robust fallback.
+    window.setInterval(sync, 400)
   }
 
   // ---- settings / redraw ----
@@ -307,7 +322,7 @@ function main(): void {
       lastFrame = null
       controls.setRunning(true)
       controls.setStatus('running')
-      requestAnimationFrame(loop)
+      scheduleNext()
     } catch (error) {
       camera.stop()
       controls.setStatus('startup failed: ' + CameraController.describeError(error))
@@ -321,6 +336,7 @@ function main(): void {
     // Never let a recording keep running over a frozen output.
     if (isRecording()) finishRecording()
     running = false
+    clearLoop()
     camera.stop()
     lastFrame = null
     maskActive = false
@@ -439,9 +455,26 @@ function main(): void {
    * rAF pauses while the WebView2 window is minimized, so fall back to a timer
    * at a low rate in that state to keep the PiP feed alive.
    */
+  let loopRaf = 0
+  let loopTimer = 0
+
+  /** Cancel whichever loop driver (rAF or timer) is currently pending. */
+  function clearLoop(): void {
+    if (loopRaf) {
+      cancelAnimationFrame(loopRaf)
+      loopRaf = 0
+    }
+    if (loopTimer) {
+      window.clearTimeout(loopTimer)
+      loopTimer = 0
+    }
+  }
+
+  /** Schedule the next frame on the driver appropriate to the current state. */
   function scheduleNext(): void {
-    if (minimized) window.setTimeout(loop, 1000 / 12)
-    else requestAnimationFrame(loop)
+    clearLoop()
+    if (minimized) loopTimer = window.setTimeout(loop, 1000 / 12)
+    else loopRaf = requestAnimationFrame(loop)
   }
 
   controls = createControls(controlsContainer, preview, {

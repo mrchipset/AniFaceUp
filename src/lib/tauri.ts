@@ -44,3 +44,13 @@ export async function subscribeFrames(onFrame: (buf: ArrayBuffer) => void): Prom
   ch.onmessage = onFrame
   await invoke('subscribe_frames', { onFrame: ch })
 }
+
+/**
+ * Drop the stored PiP frame channel on the native side. Called when the pip
+ * window goes away so stale frames are not queued to a dead webview. No-op
+ * outside Tauri.
+ */
+export async function clearFrames(): Promise<void> {
+  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return
+  await invoke('clear_frames')
+}
