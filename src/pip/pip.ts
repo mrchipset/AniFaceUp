@@ -36,10 +36,17 @@ function render(buf: ArrayBuffer): void {
 }
 
 // ---- manual drag + double-click restore ----
-const DRAG_THRESHOLD_PX = 4
-let downX = 0
-let downY = 0
-let dragging = false
+// Start the OS drag immediately on primary-button press (most responsive).
+// The previous "wait for 4px of movement" approach felt unresponsive because
+// the drag only began after the pointer had already moved, and could be missed
+// entirely if `buttons` dropped before the threshold. A double-click is now
+// detected manually on press so it can restore the main window instead of
+// starting a second drag.
+const DOUBLE_CLICK_MS = 320
+const DOUBLE_CLICK_SLOP_PX = 6
+let lastPressTime = 0
+let lastPressX = 0
+let lastPressY = 0
 
 function startDrag(): void {
   void getCurrentWindow()
@@ -48,21 +55,23 @@ function startDrag(): void {
 }
 
 window.addEventListener('pointerdown', (event) => {
-  downX = event.clientX
-  downY = event.clientY
-  dragging = false
-})
+  if (event.button !== 0) return
+  const now = performance.now()
+  const isDouble =
+    now - lastPressTime < DOUBLE_CLICK_MS &&
+    Math.hypot(event.clientX - lastPressX, event.clientY - lastPressY) < DOUBLE_CLICK_SLOP_PX
+  lastPressTime = now
+  lastPressX = event.clientX
+  lastPressY = event.clientY
 
-window.addEventListener('pointermove', (event) => {
-  if (dragging || event.buttons !== 1) return
-  if (Math.hypot(event.clientX - downX, event.clientY - downY) < DRAG_THRESHOLD_PX) return
-  dragging = true
+  if (isDouble) {
+    lastPressTime = 0
+    if (isTauri()) {
+      void restoreMain().catch((error: unknown) => console.warn('[pip] restoreMain failed:', error))
+    }
+    return
+  }
   if (isTauri()) startDrag()
-})
-
-window.addEventListener('dblclick', () => {
-  if (!isTauri()) return
-  void restoreMain().catch((error: unknown) => console.warn('[pip] restoreMain failed:', error))
 })
 
 // ---- wheel scaling (proportional, bottom-right anchored) ----
