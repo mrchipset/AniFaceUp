@@ -158,9 +158,19 @@ pub fn run() {
                     // When the main window is asked to close, also close the
                     // borderless pip window so the app can exit cleanly.
                     WindowEvent::CloseRequested { .. } => {
-                        if let Some(pip) = window.app_handle().get_webview_window("pip") {
-                            let _ = pip.close();
-                        }
+                        // Close the hidden PiP window AND force a clean exit with
+                        // code 0. Closing only the PiP can leave the (hidden)
+                        // window alive long enough that the app does not exit;
+                        // `tauri dev` then Ctrl+C's the still-running debug child
+                        // (STATUS_CONTROL_C_EXIT / 0xC000013A). Exit off the
+                        // event-loop thread to avoid re-entrancy.
+                        let app = window.app_handle().clone();
+                        std::thread::spawn(move || {
+                            if let Some(pip) = app.get_webview_window("pip") {
+                                let _ = pip.close();
+                            }
+                            app.exit(0);
+                        });
                     }
                     // Minimize-to-tray: always signal the minimize transition so
                     // the PiP/loop can keep running, but only hide the window
