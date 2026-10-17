@@ -41,8 +41,23 @@ async function positionBottomRight(win: WebviewWindow): Promise<void> {
   if (!monitor) return
   const scale = monitor.scaleFactor || 1
   const { position, size } = monitor.workArea
-  const x = position.x / scale + size.width / scale - WIDTH - MARGIN
-  const y = position.y / scale + size.height / scale - HEIGHT - MARGIN
+  // Use the PiP's actual size (it can be resized by the wheel); fall back to
+  // the declared dimensions if the query fails.
+  let width = WIDTH
+  let height = HEIGHT
+  try {
+    const outer = await win.outerSize()
+    width = outer.width / scale
+    height = outer.height / scale
+    if (!(width > 0) || !(height > 0)) {
+      width = WIDTH
+      height = HEIGHT
+    }
+  } catch (error) {
+    console.warn('[pip] outerSize failed:', error)
+  }
+  const x = position.x / scale + size.width / scale - width - MARGIN
+  const y = position.y / scale + size.height / scale - height - MARGIN
   await win.setPosition(new LogicalPosition(Math.round(x), Math.round(y)))
 }
 
