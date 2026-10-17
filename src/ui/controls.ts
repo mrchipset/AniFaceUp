@@ -303,6 +303,10 @@ export class HarnessControls {
         this.setCheck('tray_min', s.minimizeToTray)
         this.callbacks.onToggleMinimizeToTray()
       }
+
+      // Redraw from the applied values. Keep `applying` set so this can never
+      // feed the autosave loop (onRefresh is not an onStateChange source).
+      this.callbacks.onRefresh()
     } finally {
       this.applying = false
     }

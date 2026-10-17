@@ -149,3 +149,9 @@ The UI must look like a considered desktop tool, not a generic AI page.
 
 Deepwork progress lives in `.slim/deepwork/anifaceup-desktop.md` (git-local).
 Keep it updated with phase status, accepted research, and validation results.
+
+UI settings persist in `localStorage` under `anifaceup.settings.v1` (frontend
+only, not Rust). Dev (`http://localhost:1420`) and packaged
+(`http://tauri.localhost`) are separate origins, so settings do not carry
+between `tauri dev` and the installed app; deleting
+`%LOCALAPPDATA%\com.anifaceup.app\EBWebView` also wipes them.

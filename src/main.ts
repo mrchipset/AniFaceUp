@@ -89,6 +89,15 @@ function main(): void {
     }, 250)
   }
 
+  /** Flush any pending debounced save immediately (called on page exit). */
+  function flushSave(): void {
+    if (saveTimer !== null) {
+      window.clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    saveSettings(controls.getState())
+  }
+
   // ---- PiP output window ----
   /** True while the main window is hidden to the tray (driven by Rust events). */
   let trayMode = false
@@ -325,6 +334,9 @@ function main(): void {
       controls.setDevice(label)
       controls.setStatus('loading avatar model…')
       await avatar.init(pendingModelPath ?? AVATAR_MODEL)
+      // Re-apply the transform: a restore before init only stores the values,
+      // so this guarantees they are in effect once the model is ready.
+      applyTransform()
       if (pendingModelPath) {
         URL.revokeObjectURL(pendingModelPath)
         pendingModelPath = null
@@ -513,7 +525,12 @@ function main(): void {
 
   // Restore saved parameters (selection dims + keepAspect land atomically).
   const saved = loadSettings()
-  if (saved) controls.applyState(saved)
+  if (saved) {
+    controls.applyState(saved)
+    // Push the restored slider values into the avatar now; init() also
+    // re-applies the stored transform once the model exists.
+    applyTransform()
+  }
 
   applyDrawSettings()
   // Show the selection + handles while idle, before any camera frame exists.
@@ -522,6 +539,9 @@ function main(): void {
   void setMinimizeToTray(controls.minimizeToTray)
   syncPip()
   watchTrayMode()
+  // Flush a pending debounced save when the page is hidden/unloaded.
+  window.addEventListener('pagehide', flushSave)
+  window.addEventListener('beforeunload', flushSave)
 }
 
 try {
