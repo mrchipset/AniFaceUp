@@ -17,7 +17,7 @@ import { AvatarController } from './avatar/avatarController'
 import { CompositeRenderer } from './compose/composite'
 import { OutputRenderer } from './compose/output'
 import { isRecording, screenshot, startRecording, stopRecording } from './export/recorder'
-import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame, setMinimizeToTray } from './lib/tauri'
+import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame, setFacePresent, setMinimizeToTray } from './lib/tauri'
 import { hidePip, isPipVisible, showPip } from './pip/pipWindow'
 import { createControls, type HarnessControls } from './ui/controls'
 import { loadSettings, saveSettings } from './ui/persistence'
@@ -103,6 +103,8 @@ function main(): void {
   let trayMode = false
   let pipPushPending = false
   let lastPipPush = 0
+  /** Last reported face-presence (null until the first detection tick). */
+  let lastFacePresent: boolean | null = null
 
   /** Show the PiP only while the camera runs, the window is in the tray and it is enabled. */
   function syncPip(): void {
@@ -119,6 +121,8 @@ function main(): void {
   /** Throttled JPEG snapshot of the output canvas, forwarded to the PiP window. */
   function pushPipFrame(): void {
     if (!isPipVisible() || pipPushPending) return
+    // No face: leave the PiP on its last frame and do not touch the throttle.
+    if (lastFacePresent !== true) return
     const now = performance.now()
     if (now - lastPipPush < PIP_INTERVAL_MS) return
     lastPipPush = now
@@ -455,6 +459,14 @@ function main(): void {
     if (!running) return
     const ts = performance.now()
     const result = detect(ts)
+    // Report face-presence transitions to the native side (drives the PiP).
+    const facePresent = !!result?.faceLandmarks?.length
+    if (facePresent !== lastFacePresent) {
+      lastFacePresent = facePresent
+      void setFacePresent(facePresent).catch((error: unknown) =>
+        console.warn('[pip] setFacePresent failed:', error),
+      )
+    }
     tickSegmentation(ts)
 
     if (avatar.ready) {

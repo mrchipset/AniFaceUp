@@ -13,6 +13,10 @@ use tauri_plugin_dialog::DialogExt;
 #[derive(Default)]
 struct FrameHub(Mutex<Option<Channel<InvokeResponseBody>>>);
 
+/// Latest face-presence signal from the main loop, mirrored to the PiP window.
+#[derive(Default)]
+struct FaceState(AtomicBool);
+
 /// User-configurable UI/runtime state shared with the window-event handler.
 struct UiState {
     /// When true, minimizing the main window hides it to the tray.
@@ -35,6 +39,19 @@ impl Default for UiState {
 #[tauri::command]
 fn set_minimize_to_tray(enabled: bool, state: tauri::State<'_, UiState>) {
     state.minimize_to_tray.store(enabled, Ordering::SeqCst);
+}
+
+/// Record whether a face is currently detected and notify the PiP window.
+#[tauri::command]
+fn set_face_present(app: tauri::AppHandle, present: bool, state: tauri::State<'_, FaceState>) {
+    state.0.store(present, Ordering::SeqCst);
+    let _ = app.emit_to("pip", "pip://face", present);
+}
+
+/// Read the last face-presence signal (polled by the PiP window at startup).
+#[tauri::command]
+fn get_face_present(state: tauri::State<'_, FaceState>) -> bool {
+    state.0.load(Ordering::SeqCst)
 }
 
 /// Registers (or replaces) the pip window's frame channel. Called by the pip
@@ -146,6 +163,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(FrameHub::default())
         .manage(UiState::default())
+        .manage(FaceState::default())
         .on_permission_request(|_webview, kind| match kind {
             PermissionKind::Camera => PermissionResponse::Allow,
             _ => PermissionResponse::Default,
@@ -233,7 +251,9 @@ pub fn run() {
             push_frame,
             clear_frames,
             restore_main,
-            set_minimize_to_tray
+            set_minimize_to_tray,
+            set_face_present,
+            get_face_present
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

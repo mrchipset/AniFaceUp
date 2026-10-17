@@ -79,6 +79,21 @@ export async function setMinimizeToTray(enabled: boolean): Promise<void> {
   await invoke('set_minimize_to_tray', { enabled })
 }
 
+/**
+ * Report whether a face is currently detected. Mirrored to the PiP window by
+ * the native side. No-op outside Tauri.
+ */
+export async function setFacePresent(present: boolean): Promise<void> {
+  if (!isTauri()) return
+  await invoke('set_face_present', { present })
+}
+
+/** Read the last reported face state; `false` outside Tauri. */
+export async function getFacePresent(): Promise<boolean> {
+  if (!isTauri()) return false
+  return invoke<boolean>('get_face_present')
+}
+
 /** Subscribe to `tray://minimized`. Returns an unlisten fn (no-op outside Tauri). */
 export async function onTrayMinimized(cb: () => void): Promise<() => void> {
   return listenTrayEvent('tray://minimized', cb)

@@ -8,10 +8,16 @@
  * double-click still reaches the `dblclick` handler that restores the app.
  */
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { restoreMain, subscribeFrames } from '../lib/tauri'
+import { listen } from '@tauri-apps/api/event'
+import { getFacePresent, restoreMain, subscribeFrames } from '../lib/tauri'
 
 function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+/** Mirror the face-detection state as a red border on the whole window. */
+function applyFace(present: boolean): void {
+  document.body.classList.toggle('no-face', !present)
 }
 
 const img = document.getElementById('frame') as HTMLImageElement | null
@@ -62,4 +68,11 @@ if (isTauri()) {
   void subscribeFrames(render).catch((error: unknown) => {
     console.warn('[pip] subscribe failed:', error)
   })
+  // Initial state, then live updates while this window is open.
+  void getFacePresent()
+    .then(applyFace)
+    .catch((error: unknown) => console.warn('[pip] getFacePresent failed:', error))
+  void listen<boolean>('pip://face', (event) => applyFace(!!event.payload)).catch(
+    (error: unknown) => console.warn('[pip] face listen failed:', error),
+  )
 }

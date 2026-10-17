@@ -18,3 +18,12 @@ body {
   border: 0;
   background: transparent;
 }
+
+/* No face detected: keep the last frame and flag it with a red outer border. */
+body.no-face::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  border: 3px solid #e5484d;
+  pointer-events: none;
+}
