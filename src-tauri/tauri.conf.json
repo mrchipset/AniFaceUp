@@ -18,6 +18,7 @@
         "height": 800,
         "resizable": true,
         "fullscreen": false,
+        "backgroundColor": "#f3f1ea",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       },
       {

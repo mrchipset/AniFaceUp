@@ -41,6 +41,21 @@ function required<T extends HTMLElement>(id: string): T {
   return el as T
 }
 
+/** Minimum boot-splash dwell, measured from page load, to avoid a hard flicker. */
+const MIN_SPLASH_MS = 200
+let appRevealed = false
+
+/** Reveal the shell and fade the boot splash. Safe to call more than once. */
+function revealApp(): void {
+  if (appRevealed) return
+  appRevealed = true
+  const elapsed = typeof performance !== 'undefined' ? performance.now() : MIN_SPLASH_MS
+  const wait = Math.max(0, MIN_SPLASH_MS - elapsed)
+  window.setTimeout(() => {
+    requestAnimationFrame(() => document.body.classList.add('ready'))
+  }, wait)
+}
+
 function main(): void {
   const video = required<HTMLVideoElement>('webcam')
   const overlay = required<HTMLCanvasElement>('overlay')
@@ -555,6 +570,7 @@ function main(): void {
   // Flush a pending debounced save when the page is hidden/unloaded.
   window.addEventListener('pagehide', flushSave)
   window.addEventListener('beforeunload', flushSave)
+  revealApp()
 }
 
 try {
@@ -566,4 +582,6 @@ try {
     diag.textContent = 'boot failed: ' + (error instanceof Error ? error.message : String(error))
     diag.removeAttribute('hidden')
   }
+  // Never leave the styled shell hidden behind the splash after a boot error.
+  revealApp()
 }

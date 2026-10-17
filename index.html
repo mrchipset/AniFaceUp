@@ -4,8 +4,141 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AniFaceUp</title>
+    <style>
+      /*
+       * Critical boot styles. Kept inline so the first paint is already on-brand
+       * before Vite/module CSS arrives. Uses the same warm tokens as styles.css.
+       */
+      :root {
+        color-scheme: light;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #f3f1ea; /* --bg */
+      }
+
+      /* The shell waits behind the splash until boot signals readiness. */
+      .app {
+        visibility: hidden;
+      }
+
+      body.ready .app {
+        visibility: visible;
+      }
+
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        background: #f3f1ea; /* --bg */
+        color: #1e1b15; /* --ink */
+        font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+        user-select: none;
+        -webkit-user-select: none;
+        transition: opacity 160ms ease;
+      }
+
+      #boot * {
+        box-sizing: border-box;
+      }
+
+      #boot .boot-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+
+      #boot .boot-mark {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border: 1px solid #d9d4c6; /* --line-2 */
+        border-radius: 8px;
+        background: #f8f6f0; /* --surface-2 */
+        color: #1e1b15;
+      }
+
+      #boot .boot-name {
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: -0.012em;
+        line-height: 1.5;
+        color: #1e1b15;
+      }
+
+      #boot .boot-track {
+        position: relative;
+        width: 128px;
+        height: 2px;
+        border-radius: 999px;
+        background: #e6e2d8; /* --line */
+        overflow: hidden;
+      }
+
+      #boot .boot-bar {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 38%;
+        border-radius: inherit;
+        background: #8a6a2e; /* --focus */
+        animation: boot-sweep 1.4s cubic-bezier(0.5, 0, 0.35, 1) infinite;
+      }
+
+      @keyframes boot-sweep {
+        0% {
+          transform: translateX(-120%);
+        }
+        100% {
+          transform: translateX(320%);
+        }
+      }
+
+      body.ready #boot {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #boot {
+          transition: none;
+        }
+
+        #boot .boot-bar {
+          animation: none;
+          width: 100%;
+          opacity: 0.4;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot" role="status" aria-live="polite" aria-label="Starting AniFaceUp">
+      <div class="boot-inner">
+        <span class="boot-mark" aria-hidden="true">
+          <svg viewBox="0 0 20 20" width="20" height="20" fill="none">
+            <rect x="1.5" y="1.5" width="17" height="17" rx="5" stroke="currentColor" stroke-width="1.3" />
+            <circle cx="10" cy="10" r="3.4" stroke="currentColor" stroke-width="1.3" />
+            <circle cx="10" cy="10" r="1.05" fill="currentColor" />
+          </svg>
+        </span>
+        <span class="boot-name">AniFaceUp</span>
+        <div class="boot-track" aria-hidden="true"><span class="boot-bar"></span></div>
+      </div>
+    </div>
+
     <div class="app">
       <header class="appbar">
         <div class="brand">
@@ -94,6 +227,12 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+    <script>
+      // Safety net: if the module boot never completes, reveal the app anyway.
+      setTimeout(function () {
+        document.body.classList.add('ready')
+      }, 5000)
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
