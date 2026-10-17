@@ -20,6 +20,7 @@ import { isRecording, screenshot, startRecording, stopRecording } from './export
 import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame, setMinimizeToTray } from './lib/tauri'
 import { hidePip, isPipVisible, showPip } from './pip/pipWindow'
 import { createControls, type HarnessControls } from './ui/controls'
+import { loadSettings, saveSettings } from './ui/persistence'
 
 function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -77,6 +78,16 @@ function main(): void {
   let segTick = 0
   /** Object URL for a custom GLB chosen before the avatar was initialized. */
   let pendingModelPath: string | null = null
+
+  /** Debounced autosave; coalesces rapid slider/pointer changes. */
+  let saveTimer: number | null = null
+  function scheduleSave(): void {
+    if (saveTimer !== null) window.clearTimeout(saveTimer)
+    saveTimer = window.setTimeout(() => {
+      saveTimer = null
+      saveSettings(controls.getState())
+    }, 250)
+  }
 
   // ---- PiP output window ----
   /** True while the main window is hidden to the tray (driven by Rust events). */
@@ -345,6 +356,8 @@ function main(): void {
     composite.clear()
     output.setSelection(controls.selection)
     output.draw()
+    // Keep the selection + handles visible while idle (no frame to draw over).
+    output.drawSelectionOverlay()
     controls.resetStats()
     controls.setRunning(false)
     controls.setStatus('stopped')
@@ -492,13 +505,22 @@ function main(): void {
     onImportModel: importCustomModel,
     onTogglePip: syncPip,
     onToggleMinimizeToTray: () => void setMinimizeToTray(controls.minimizeToTray),
+    onStateChange: scheduleSave,
   })
   controls.attachSelectionDrag(compCanvas)
   controls.setRunning(false)
   controls.setStatus('idle')
+
+  // Restore saved parameters (selection dims + keepAspect land atomically).
+  const saved = loadSettings()
+  if (saved) controls.applyState(saved)
+
   applyDrawSettings()
-  // Push the checkbox default to Rust so its state matches the UI at boot.
+  // Show the selection + handles while idle, before any camera frame exists.
+  output.drawSelectionOverlay()
+  // Push the (possibly restored) tray preference after the restore.
   void setMinimizeToTray(controls.minimizeToTray)
+  syncPip()
   watchTrayMode()
 }
 

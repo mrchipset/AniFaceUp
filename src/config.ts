@@ -145,3 +145,36 @@ export const TRANSFORM_DEFAULTS: ModelTransform = { scale: 1, x: 0, y: 0, z: 0 }
 
 /** Default camera position used by "reset view". */
 export const RESET_CAMERA = { position: [0, 0, 1.5] as [number, number, number], fov: 40 }
+
+// ---- Persisted UI settings ----
+/** Bump when the persisted shape changes; old payloads are then discarded. */
+export const SETTINGS_VERSION = 1
+export const SETTINGS_KEY = 'anifaceup.settings.v1'
+
+/**
+ * The user-tunable settings saved to localStorage. Manual-expression sliders
+ * are intentionally excluded, and the aspect ratio is derived from `w/h`
+ * (never stored) so it can never drift from the dimensions.
+ */
+export interface PersistedSettings {
+  version: number
+  mirror: boolean
+  landmarks: boolean
+  mesh: boolean
+  blur: { on: boolean; invert: boolean; px: number }
+  composite: { on: boolean; size: number; dx: number; dy: number }
+  selection: {
+    w: number
+    h: number
+    cx: number
+    cy: number
+    mul: number
+    mask: MaskShape
+    radius: number
+    feather: number
+    keepAspect: boolean
+  }
+  transform: ModelTransform
+  pipEnabled: boolean
+  minimizeToTray: boolean
+}

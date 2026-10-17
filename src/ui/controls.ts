@@ -13,11 +13,13 @@ import {
   BLUR_MIN_PX,
   COMPOSITE_DEFAULTS,
   SELECTION_DEFAULTS,
+  SETTINGS_VERSION,
   TRANSFORM_DEFAULTS,
   selectionHandlePx,
   selectionRect,
   type MaskShape,
   type ModelTransform,
+  type PersistedSettings,
   type SelRect,
   type Selection,
 } from '../config'
@@ -53,6 +55,8 @@ export interface ControlsCallbacks {
   onTogglePip(): void
   /** The "minimize to tray" checkbox changed. */
   onToggleMinimizeToTray(): void
+  /** A user change occurred that should be persisted (debounced by the caller). */
+  onStateChange?(): void
 }
 
 interface RangeSpec {
@@ -71,8 +75,9 @@ type StatusState = 'idle' | 'warn' | 'ok' | 'err'
 
 type SelHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 
-/** Minimum selection size, in composite-buffer pixels. */
-const MIN_SEL_PX = 32
+/** Minimum selection size, in composite-buffer pixels. Also used as the
+ *  width/height slider minimum so resize handles and sliders share one bound. */
+const MIN_SEL_PX = 50
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
@@ -110,6 +115,8 @@ export class HarnessControls {
   private toastTimer: number | null = null
   /** Width/height ratio captured when "keep aspect ratio" is switched on (0 = off). */
   private aspectRatio = 0
+  /** True while `applyState` writes inputs; suppresses autosave notifications. */
+  private applying = false
   private readonly callbacks: ControlsCallbacks
   private readonly preview: HTMLElement | null
 
@@ -211,6 +218,100 @@ export class HarnessControls {
       tongue: this.num('s_tongue'),
       yaw: this.num('s_yaw'),
     }
+  }
+
+  // ---- persisted state ----
+
+  /** Snapshot of every persisted (non-expression) setting. */
+  getState(): PersistedSettings {
+    return {
+      version: SETTINGS_VERSION,
+      mirror: this.mirror,
+      landmarks: this.showLandmarks,
+      mesh: this.showMesh,
+      blur: { on: this.blurOn, invert: this.blurInvert, px: this.blurPx },
+      composite: this.composite,
+      selection: this.selection,
+      transform: this.transform,
+      pipEnabled: this.pipEnabled,
+      minimizeToTray: this.minimizeToTray,
+    }
+  }
+
+  /**
+   * Restore persisted state. Selection dimensions and `keepAspect` are applied
+   * in one `setSelection` call so the aspect ratio is captured from the
+   * restored (already clamped) dimensions. Programmatic writes must not feed
+   * the autosave loop, so `onStateChange` is suppressed while applying.
+   */
+  applyState(s: PersistedSettings | Partial<PersistedSettings>): void {
+    this.applying = true
+    try {
+      const sel = s.selection
+      if (sel) {
+        const partial: Partial<Selection> = {}
+        if (typeof sel.w === 'number') partial.w = sel.w
+        if (typeof sel.h === 'number') partial.h = sel.h
+        if (typeof sel.cx === 'number') partial.cx = sel.cx
+        if (typeof sel.cy === 'number') partial.cy = sel.cy
+        if (typeof sel.mul === 'number') partial.mul = sel.mul
+        if (sel.mask === 'none' || sel.mask === 'round' || sel.mask === 'circle') {
+          partial.mask = sel.mask
+        }
+        if (typeof sel.radius === 'number') partial.radius = sel.radius
+        if (typeof sel.feather === 'number') partial.feather = sel.feather
+        if (typeof sel.keepAspect === 'boolean') partial.keepAspect = sel.keepAspect
+        // Single call: w/h land before keepAspect captures the ratio.
+        this.setSelection(partial)
+      }
+
+      if (typeof s.mirror === 'boolean') {
+        this.setCheck('c_mirror', s.mirror)
+        this.preview?.classList.toggle('mirror', s.mirror)
+      }
+      if (typeof s.landmarks === 'boolean') this.setCheck('c_lm', s.landmarks)
+      if (typeof s.mesh === 'boolean') this.setCheck('c_mesh', s.mesh)
+
+      if (s.blur) {
+        if (typeof s.blur.on === 'boolean') {
+          this.setCheck('blur_on', s.blur.on)
+          if (s.blur.on) this.callbacks.onBlurEnable()
+        }
+        if (typeof s.blur.invert === 'boolean') this.setCheck('blur_invert', s.blur.invert)
+        if (typeof s.blur.px === 'number') this.setInputValue('blur_px', s.blur.px)
+      }
+
+      if (s.composite) {
+        if (typeof s.composite.on === 'boolean') this.setCheck('cp_on', s.composite.on)
+        if (typeof s.composite.size === 'number') this.setInputValue('cp_size', s.composite.size)
+        if (typeof s.composite.dx === 'number') this.setInputValue('cp_dx', s.composite.dx)
+        if (typeof s.composite.dy === 'number') this.setInputValue('cp_dy', s.composite.dy)
+      }
+
+      if (s.transform) {
+        if (typeof s.transform.scale === 'number') this.setInputValue('t_scale', s.transform.scale)
+        if (typeof s.transform.x === 'number') this.setInputValue('t_x', s.transform.x)
+        if (typeof s.transform.y === 'number') this.setInputValue('t_y', s.transform.y)
+        if (typeof s.transform.z === 'number') this.setInputValue('t_z', s.transform.z)
+      }
+
+      if (typeof s.pipEnabled === 'boolean') {
+        this.setCheck('pip_on', s.pipEnabled)
+        this.callbacks.onTogglePip()
+      }
+      if (typeof s.minimizeToTray === 'boolean') {
+        this.setCheck('tray_min', s.minimizeToTray)
+        this.callbacks.onToggleMinimizeToTray()
+      }
+    } finally {
+      this.applying = false
+    }
+  }
+
+  /** Notify the owner of a user change (ignored while applyState is running). */
+  private notifyChange(): void {
+    if (this.applying) return
+    this.callbacks.onStateChange?.()
   }
 
   // ---- setters ----
@@ -414,8 +515,12 @@ export class HarnessControls {
     const writeRect = (left: number, top: number, w: number, h: number): void => {
       const cw = composite.width
       const ch = composite.height
-      const rw = Math.max(1, Math.round(w))
-      const rh = Math.max(1, Math.round(h))
+      // Clamp to the same [min,max] the sliders advertise, so the overlay,
+      // inputs and stored selection can never disagree.
+      const [wMin, wMax] = this.rangeBounds('sel_w')
+      const [hMin, hMax] = this.rangeBounds('sel_h')
+      const rw = clamp(Math.round(w), wMin, wMax)
+      const rh = clamp(Math.round(h), hMin, hMax)
       const cx = clamp((left + rw / 2) / cw, 0, 1)
       const cy = clamp((top + rh / 2) / ch, 0, 1)
       this.setInputValue('sel_w', rw)
@@ -539,6 +644,7 @@ export class HarnessControls {
       active = null
       if (composite.hasPointerCapture(ev.pointerId)) composite.releasePointerCapture(ev.pointerId)
       setCursor(ev, bufferPoint(ev))
+      this.notifyChange()
     }
     composite.addEventListener('pointerup', end)
     composite.addEventListener('pointercancel', end)
@@ -627,6 +733,7 @@ export class HarnessControls {
             this.setInputValue('cp_dx', COMPOSITE_DEFAULTS.dx)
             this.setInputValue('cp_dy', COMPOSITE_DEFAULTS.dy)
             this.callbacks.onRefresh()
+            this.notifyChange()
           }),
         ),
       )
@@ -636,8 +743,8 @@ export class HarnessControls {
   private selectionSection(): HTMLElement {
     return this.section('Output selection', (body) => {
       body.append(
-        this.rangeRow({ key: 'sel_w', label: 'width', min: 50, max: 1920, step: 1, value: SELECTION_DEFAULTS.w, decimals: 0 }, 'refresh'),
-        this.rangeRow({ key: 'sel_h', label: 'height', min: 50, max: 1920, step: 1, value: SELECTION_DEFAULTS.h, decimals: 0 }, 'refresh'),
+        this.rangeRow({ key: 'sel_w', label: 'width', min: MIN_SEL_PX, max: 1920, step: 1, value: SELECTION_DEFAULTS.w, decimals: 0 }, 'refresh'),
+        this.rangeRow({ key: 'sel_h', label: 'height', min: MIN_SEL_PX, max: 1920, step: 1, value: SELECTION_DEFAULTS.h, decimals: 0 }, 'refresh'),
         this.row([this.checkbox('sel_keep_aspect', 'keep aspect ratio', SELECTION_DEFAULTS.keepAspect)], 'wrap'),
         this.rangeRow({ key: 'sel_x', label: 'position x', min: 0, max: 1, step: 0.001, value: SELECTION_DEFAULTS.cx, decimals: 3 }, 'refresh'),
         this.rangeRow({ key: 'sel_y', label: 'position y', min: 0, max: 1, step: 0.001, value: SELECTION_DEFAULTS.cy, decimals: 3 }, 'refresh'),
@@ -660,6 +767,7 @@ export class HarnessControls {
           this.button('Reset selection', () => {
             this.setSelection(SELECTION_DEFAULTS)
             this.callbacks.onRefresh()
+            this.notifyChange()
           }),
         ),
       )
@@ -679,6 +787,7 @@ export class HarnessControls {
           this.button('Reset transform', () => {
             this.setTransformInputs(TRANSFORM_DEFAULTS)
             this.callbacks.onTransform()
+            this.notifyChange()
           }),
           this.button('Reset view', () => this.callbacks.onResetView()),
         ),
@@ -761,7 +870,10 @@ export class HarnessControls {
     input.type = 'checkbox'
     input.className = 'switch-input'
     input.checked = checked
-    input.addEventListener('change', () => this.onToggle(key))
+    input.addEventListener('change', () => {
+      this.onToggle(key)
+      this.notifyChange()
+    })
     const track = document.createElement('span')
     track.className = 'switch-track'
     track.setAttribute('aria-hidden', 'true')
@@ -799,6 +911,7 @@ export class HarnessControls {
       if (kind === 'transform') this.callbacks.onTransform()
       else if (kind === 'expression') this.callbacks.onExpression()
       else this.callbacks.onRefresh()
+      this.notifyChange()
     })
     input.addEventListener(
       'wheel',
@@ -845,7 +958,10 @@ export class HarnessControls {
       select.append(option)
     }
     select.value = value
-    select.addEventListener('change', () => this.callbacks.onRefresh())
+    select.addEventListener('change', () => {
+      this.callbacks.onRefresh()
+      this.notifyChange()
+    })
     this.inputs.set(key, select)
     el.append(name, select)
     return el
@@ -893,6 +1009,11 @@ export class HarnessControls {
 
   // ---- input access ----
 
+  private setCheck(key: string, value: boolean): void {
+    const input = this.inputs.get(key)
+    if (input instanceof HTMLInputElement) input.checked = value
+  }
+
   private setInputValue(key: string, value: string | number): void {
     const input = this.inputs.get(key)
     if (!input) return
@@ -901,7 +1022,9 @@ export class HarnessControls {
     if (readout) {
       const step = input instanceof HTMLInputElement ? Number(input.step) : 1
       const decimals = step && step < 1 ? Math.min(6, String(step).split('.')[1]?.length ?? 2) : 0
-      readout.textContent = Number(value).toFixed(decimals)
+      // Read back the clamped/step-snapped value the input actually holds so
+      // the readout can never diverge from the real control value.
+      readout.textContent = Number(input.value).toFixed(decimals)
     }
   }
 
