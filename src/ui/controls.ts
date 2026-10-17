@@ -55,6 +55,8 @@ export interface ControlsCallbacks {
   onTogglePip(): void
   /** The "minimize to tray" checkbox changed. */
   onToggleMinimizeToTray(): void
+  /** The "recording mode" checkbox changed. */
+  onToggleRecordingMode(): void
   /** A user change occurred that should be persisted (debounced by the caller). */
   onStateChange?(): void
 }
@@ -167,6 +169,10 @@ export class HarnessControls {
 
   get minimizeToTray(): boolean {
     return this.check('tray_min')
+  }
+
+  get recordingMode(): boolean {
+    return this.check('rec_mode')
   }
 
   get blurInvert(): boolean {
@@ -702,6 +708,7 @@ export class HarnessControls {
       body.append(this.row([this.startBtn, this.stopBtn]))
       body.append(this.row([this.checkbox('pip_on', 'output window when minimized', false)], 'wrap'))
       body.append(this.row([this.checkbox('tray_min', 'minimize to tray', true)], 'wrap'))
+      body.append(this.row([this.checkbox('rec_mode', 'recording mode', false)], 'wrap'))
     })
   }
 
@@ -998,6 +1005,10 @@ export class HarnessControls {
     }
     if (key === 'tray_min') {
       this.callbacks.onToggleMinimizeToTray()
+      return
+    }
+    if (key === 'rec_mode') {
+      this.callbacks.onToggleRecordingMode()
       return
     }
     if (key === 'sel_keep_aspect') {

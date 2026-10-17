@@ -17,7 +17,7 @@ import { AvatarController } from './avatar/avatarController'
 import { CompositeRenderer } from './compose/composite'
 import { OutputRenderer } from './compose/output'
 import { isRecording, screenshot, startRecording, stopRecording } from './export/recorder'
-import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame, setFacePresent, setMinimizeToTray } from './lib/tauri'
+import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame, setFacePresent, setMinimizeToTray, setRecordingMode } from './lib/tauri'
 import { hidePip, isPipVisible, showPip } from './pip/pipWindow'
 import { createControls, type HarnessControls } from './ui/controls'
 import { loadSettings, saveSettings } from './ui/persistence'
@@ -529,6 +529,7 @@ function main(): void {
     onImportModel: importCustomModel,
     onTogglePip: syncPip,
     onToggleMinimizeToTray: () => void setMinimizeToTray(controls.minimizeToTray),
+    onToggleRecordingMode: () => void setRecordingMode(controls.recordingMode),
     onStateChange: scheduleSave,
   })
   controls.attachSelectionDrag(compCanvas)

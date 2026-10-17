@@ -94,6 +94,15 @@ export async function getFacePresent(): Promise<boolean> {
   return invoke<boolean>('get_face_present')
 }
 
+/**
+ * Tell the native side whether recording is active, so restoring the main
+ * window warns first. No-op outside Tauri.
+ */
+export async function setRecordingMode(enabled: boolean): Promise<void> {
+  if (!isTauri()) return
+  await invoke('set_recording_mode', { enabled })
+}
+
 /** Subscribe to `tray://minimized`. Returns an unlisten fn (no-op outside Tauri). */
 export async function onTrayMinimized(cb: () => void): Promise<() => void> {
   return listenTrayEvent('tray://minimized', cb)

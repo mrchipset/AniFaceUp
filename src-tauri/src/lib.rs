@@ -6,7 +6,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{PermissionKind, PermissionResponse};
 use tauri::{Emitter, Manager, State, WindowEvent};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 /// Holds the single subscriber channel used to stream output frames from the
 /// main window to the picture-in-picture window.
@@ -16,6 +16,10 @@ struct FrameHub(Mutex<Option<Channel<InvokeResponseBody>>>);
 /// Latest face-presence signal from the main loop, mirrored to the PiP window.
 #[derive(Default)]
 struct FaceState(AtomicBool);
+
+/// True while the app is recording; restoring the main window then warns first.
+#[derive(Default)]
+struct RecordingMode(AtomicBool);
 
 /// User-configurable UI/runtime state shared with the window-event handler.
 struct UiState {
@@ -52,6 +56,12 @@ fn set_face_present(app: tauri::AppHandle, present: bool, state: tauri::State<'_
 #[tauri::command]
 fn get_face_present(state: tauri::State<'_, FaceState>) -> bool {
     state.0.load(Ordering::SeqCst)
+}
+
+/// Record whether the app is currently recording (gates restore confirmations).
+#[tauri::command]
+fn set_recording_mode(enabled: bool, state: tauri::State<'_, RecordingMode>) {
+    state.0.store(enabled, Ordering::SeqCst);
 }
 
 /// Registers (or replaces) the pip window's frame channel. Called by the pip
@@ -137,7 +147,7 @@ async fn export_output(
 
 /// Un-hides/un-minimizes the main window, focuses it, and notifies the frontend.
 /// Any open pip window is hidden, since the main window now owns the view.
-fn restore_main_window(app: &tauri::AppHandle) {
+fn do_restore_main_window(app: &tauri::AppHandle) {
     // Reset the minimize edge-detector so the next minimize re-signals cleanly.
     app.state::<UiState>().was_minimized.store(false, Ordering::SeqCst);
     if let Some(main) = app.get_webview_window("main") {
@@ -151,10 +161,32 @@ fn restore_main_window(app: &tauri::AppHandle) {
     }
 }
 
-/// Frontend-facing command to restore the main window from the tray.
+/// Restore the main window, first asking for confirmation while recording.
+/// The blocking dialog runs on a worker thread so it never stalls the caller
+/// (tray/menu callbacks and commands can run on the main thread).
+fn request_restore_main(app: &tauri::AppHandle) {
+    if !app.state::<RecordingMode>().0.load(Ordering::SeqCst) {
+        do_restore_main_window(app);
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let confirmed = app
+            .dialog()
+            .message("Opening the main window while recording might expose on-screen content. Continue?")
+            .title("Recording in progress")
+            .buttons(MessageDialogButtons::OkCancel)
+            .blocking_show();
+        if confirmed {
+            do_restore_main_window(&app);
+        }
+    });
+}
+
+/// Frontend-facing command to restore the main window (PiP double-click path).
 #[tauri::command]
 fn restore_main(app: tauri::AppHandle) {
-    restore_main_window(&app);
+    request_restore_main(&app);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -164,6 +196,7 @@ pub fn run() {
         .manage(FrameHub::default())
         .manage(UiState::default())
         .manage(FaceState::default())
+        .manage(RecordingMode::default())
         .on_permission_request(|_webview, kind| match kind {
             PermissionKind::Camera => PermissionResponse::Allow,
             _ => PermissionResponse::Default,
@@ -227,7 +260,7 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => restore_main_window(app),
+                    "show" => request_restore_main(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -237,7 +270,7 @@ pub fn run() {
                         button_state: MouseButtonState::Up,
                         ..
                     } => {
-                        restore_main_window(tray.app_handle());
+                        request_restore_main(tray.app_handle());
                     }
                     _ => {}
                 })
@@ -253,7 +286,8 @@ pub fn run() {
             restore_main,
             set_minimize_to_tray,
             set_face_present,
-            get_face_present
+            get_face_present,
+            set_recording_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
