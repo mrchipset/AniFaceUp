@@ -21,18 +21,50 @@ function applyFace(present: boolean): void {
   document.body.classList.toggle('no-face', !present)
 }
 
-const img = document.getElementById('frame') as HTMLImageElement | null
+const canvas = document.getElementById('frame') as HTMLCanvasElement | null
+const ctx = canvas ? canvas.getContext('2d') : null
 
-let currentUrl: string | null = null
+/** Most recent frame awaiting decode; older frames are dropped. */
+let latest: ArrayBuffer | null = null
+let decoding = false
 
 function render(buf: ArrayBuffer): void {
-  if (!img) return
-  const blob = new Blob([buf], { type: 'image/png' })
-  const url = URL.createObjectURL(blob)
-  img.src = url
-  const previous = currentUrl
-  currentUrl = url
-  if (previous) URL.revokeObjectURL(previous)
+  latest = buf
+  if (decoding) return
+  void drain()
+}
+
+/**
+ * Decode frames one at a time, always taking the newest. This bounds latency:
+ * a slow decode never builds a backlog of stale frames.
+ */
+async function drain(): Promise<void> {
+  decoding = true
+  try {
+    while (latest) {
+      const buf = latest
+      latest = null
+      if (!canvas || !ctx) continue
+      const blob = new Blob([buf], { type: 'image/png' })
+      const bmp = await createImageBitmap(blob)
+      try {
+        if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+          canvas.width = bmp.width
+          canvas.height = bmp.height
+        }
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(bmp, 0, 0)
+      } finally {
+        bmp.close()
+      }
+    }
+  } catch (error) {
+    console.warn('[pip] decode failed:', error)
+  } finally {
+    decoding = false
+    // A frame may have arrived while the last decode was finishing.
+    if (latest) void drain()
+  }
 }
 
 // ---- manual drag + double-click restore ----

@@ -26,8 +26,11 @@ function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-/** Frame pushes to the PiP window are throttled to ~12 fps. */
-const PIP_INTERVAL_MS = 1000 / 12
+/** PiP push rate and the minimized-mode loop rate. */
+const PIP_FPS = 20
+const PIP_INTERVAL_MS = 1000 / PIP_FPS
+/** Longest side of the downscaled snapshot sent to the PiP (bounds encode cost). */
+const MAX_PIP_SNAPSHOT = 640
 
 interface LastFrame {
   landmarks: NormalizedLandmark[] | undefined
@@ -120,6 +123,9 @@ function main(): void {
   let lastPipPush = 0
   /** Last reported face-presence (null until the first detection tick). */
   let lastFacePresent: boolean | null = null
+  /** Reusable downscaled snapshot canvas for PiP encoding. */
+  let snapshotCanvas: HTMLCanvasElement | null = null
+  let snapshotCtx: CanvasRenderingContext2D | null = null
 
   /** Show the PiP only while the camera runs, the window is in the tray and it is enabled. */
   function syncPip(): void {
@@ -133,7 +139,7 @@ function main(): void {
     }
   }
 
-  /** Throttled JPEG snapshot of the output canvas, forwarded to the PiP window. */
+  /** Throttled, downscaled PNG snapshot of the output, forwarded to the PiP. */
   function pushPipFrame(): void {
     if (!isPipVisible() || pipPushPending) return
     // No face: leave the PiP on its last frame and do not touch the throttle.
@@ -143,7 +149,31 @@ function main(): void {
     lastPipPush = now
     pipPushPending = true
     try {
-      outCanvas.toBlob(
+      // Downscale into a reusable canvas: encoding the full-size output is the
+      // dominant cost (tens of ms at 1280x720), while a 640px PNG stays cheap.
+      const scale = Math.min(1, MAX_PIP_SNAPSHOT / Math.max(outCanvas.width, outCanvas.height))
+      const sw = Math.max(1, Math.round(outCanvas.width * scale))
+      const sh = Math.max(1, Math.round(outCanvas.height * scale))
+      if (!snapshotCanvas || !snapshotCtx) {
+        snapshotCanvas = document.createElement('canvas')
+        snapshotCtx = snapshotCanvas.getContext('2d')
+      }
+      const canvas = snapshotCanvas
+      const ctx = snapshotCtx
+      if (!ctx) {
+        pipPushPending = false
+        return
+      }
+      if (canvas.width !== sw || canvas.height !== sh) {
+        // Resizing resets context state, so configure smoothing afterwards.
+        canvas.width = sw
+        canvas.height = sh
+      }
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+      ctx.clearRect(0, 0, sw, sh)
+      ctx.drawImage(outCanvas, 0, 0, sw, sh)
+      canvas.toBlob(
         (blob) => {
           if (!blob) {
             pipPushPending = false
@@ -527,7 +557,7 @@ function main(): void {
   /** Schedule the next frame on the driver appropriate to the current state. */
   function scheduleNext(): void {
     clearLoop()
-    if (trayMode) loopTimer = window.setTimeout(loop, 1000 / 12)
+    if (trayMode) loopTimer = window.setTimeout(loop, 1000 / PIP_FPS)
     else loopRaf = requestAnimationFrame(loop)
   }
 
