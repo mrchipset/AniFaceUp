@@ -117,6 +117,8 @@ export class HarnessControls {
   private toastTimer: number | null = null
   /** Width/height ratio captured when "keep aspect ratio" is switched on (0 = off). */
   private aspectRatio = 0
+  /** The readout currently in inline-edit mode, if any (single-editor guard). */
+  private activeEditor: ((commit: boolean) => void) | null = null
   /** True while `applyState` writes inputs; suppresses autosave notifications. */
   private applying = false
   private readonly callbacks: ControlsCallbacks
@@ -915,6 +917,85 @@ export class HarnessControls {
     const value = document.createElement('span')
     value.className = 'readout'
     value.textContent = spec.value.toFixed(spec.decimals)
+    value.title = 'Double-click to type a value'
+
+    // ---- inline numeric editor (only one open at a time) ----
+    let editor: HTMLInputElement | null = null
+
+    /** Close the editor, optionally committing the typed value. */
+    const finish = (commit: boolean): void => {
+      const ed = editor
+      if (!ed) return
+      editor = null
+
+      if (commit) {
+        const raw = ed.value.trim()
+        const parsed = raw === '' ? NaN : Number(raw)
+        if (Number.isFinite(parsed)) {
+          const lo = parseFloat(input.min)
+          const hi = parseFloat(input.max)
+          const min = Number.isFinite(lo) ? lo : parsed
+          const max = Number.isFinite(hi) ? hi : parsed
+          input.value = String(Math.min(max, Math.max(min, parsed)))
+          // Run the existing range handler exactly once: readout formatting,
+          // aspect coupling, callbacks and autosave all hang off this event.
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+      }
+
+      ed.remove()
+      value.style.display = ''
+      if (this.activeEditor === finish) this.activeEditor = null
+    }
+
+    const startEdit = (): void => {
+      if (editor) return
+      // Only one readout may be edited at a time; commit the previous one.
+      const previous = this.activeEditor
+      if (previous) previous(true)
+
+      const ed = document.createElement('input')
+      ed.type = 'number'
+      ed.className = 'readout-input'
+      ed.min = input.min
+      ed.max = input.max
+      ed.step = input.step
+      ed.value = input.value
+      ed.title = value.title
+      ed.setAttribute('aria-label', spec.label + ' value')
+
+      ed.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault()
+          finish(true)
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault()
+          finish(false)
+        }
+      })
+      ed.addEventListener('blur', () => finish(true))
+      // Swallow the wheel so it never reaches the slider's wheel handler.
+      ed.addEventListener(
+        'wheel',
+        (ev) => {
+          ev.stopPropagation()
+          ev.preventDefault()
+        },
+        { passive: false },
+      )
+
+      editor = ed
+      this.activeEditor = finish
+      value.style.display = 'none'
+      value.insertAdjacentElement('afterend', ed)
+      ed.focus()
+      ed.select()
+    }
+
+    value.addEventListener('dblclick', (ev) => {
+      ev.preventDefault()
+      startEdit()
+    })
     input.addEventListener('input', () => {
       value.textContent = Number(input.value).toFixed(spec.decimals)
       // Couple width/height when the aspect lock is on (no-op otherwise).

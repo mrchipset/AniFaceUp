@@ -504,6 +504,39 @@ dt {
   font-variant-numeric: tabular-nums;
 }
 
+/* Inline editor that replaces a readout on double-click (same footprint). */
+.readout-input {
+  flex: 0 0 48px;
+  width: 48px;
+  min-width: 0;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--focus);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.readout-input::-webkit-outer-spin-button,
+.readout-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.readout-input:focus,
+.readout-input:focus-visible {
+  outline: none;
+}
+
 /* range */
 
 input[type="range"] {
