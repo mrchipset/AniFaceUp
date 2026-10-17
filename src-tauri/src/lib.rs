@@ -21,6 +21,15 @@ struct FaceState(AtomicBool);
 #[derive(Default)]
 struct RecordingMode(AtomicBool);
 
+/// Output mask shape + radius percentage, mirrored to the PiP window.
+struct PipMaskState(Mutex<(String, f32)>);
+
+impl Default for PipMaskState {
+    fn default() -> Self {
+        Self(Mutex::new(("none".to_string(), 0.0)))
+    }
+}
+
 /// User-configurable UI/runtime state shared with the window-event handler.
 struct UiState {
     /// When true, minimizing the main window hides it to the tray.
@@ -62,6 +71,28 @@ fn get_face_present(state: tauri::State<'_, FaceState>) -> bool {
 #[tauri::command]
 fn set_recording_mode(enabled: bool, state: tauri::State<'_, RecordingMode>) {
     state.0.store(enabled, Ordering::SeqCst);
+}
+
+/// Record the output mask shape/radius and notify the PiP window.
+#[tauri::command]
+fn set_pip_mask(
+    app: tauri::AppHandle,
+    shape: String,
+    radius: f32,
+    state: tauri::State<'_, PipMaskState>,
+) {
+    *state.0.lock().unwrap() = (shape.clone(), radius);
+    let _ = app.emit_to(
+        "pip",
+        "pip://mask",
+        serde_json::json!({ "shape": shape, "radius": radius }),
+    );
+}
+
+/// Read the last output mask (polled by the PiP window at startup).
+#[tauri::command]
+fn get_pip_mask(state: tauri::State<'_, PipMaskState>) -> (String, f32) {
+    state.0.lock().unwrap().clone()
 }
 
 /// Registers (or replaces) the pip window's frame channel. Called by the pip
@@ -197,6 +228,7 @@ pub fn run() {
         .manage(UiState::default())
         .manage(FaceState::default())
         .manage(RecordingMode::default())
+        .manage(PipMaskState::default())
         .on_permission_request(|_webview, kind| match kind {
             PermissionKind::Camera => PermissionResponse::Allow,
             _ => PermissionResponse::Default,
@@ -287,7 +319,9 @@ pub fn run() {
             set_minimize_to_tray,
             set_face_present,
             get_face_present,
-            set_recording_mode
+            set_recording_mode,
+            set_pip_mask,
+            get_pip_mask
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

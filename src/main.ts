@@ -17,7 +17,7 @@ import { AvatarController } from './avatar/avatarController'
 import { CompositeRenderer } from './compose/composite'
 import { OutputRenderer } from './compose/output'
 import { isRecording, screenshot, startRecording, stopRecording } from './export/recorder'
-import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame, setFacePresent, setMinimizeToTray, setRecordingMode } from './lib/tauri'
+import { exportOutput, importModel, onTrayMinimized, onTrayRestored, pushFrame, setFacePresent, setMinimizeToTray, setPipMask, setRecordingMode } from './lib/tauri'
 import { hidePip, isPipVisible, showPip } from './pip/pipWindow'
 import { createControls, type HarnessControls } from './ui/controls'
 import { loadSettings, saveSettings } from './ui/persistence'
@@ -228,6 +228,20 @@ function main(): void {
   }
 
   // ---- settings / redraw ----
+  /** Last mask sent to the native side, so per-frame checks avoid IPC churn. */
+  let lastPipMask: string | null = null
+
+  /** Relay the output mask (shape + radius %) to the PiP window when it changes. */
+  function syncPipMask(): void {
+    const sel = controls.selection
+    const key = `${sel.mask}:${sel.radius}`
+    if (key === lastPipMask) return
+    lastPipMask = key
+    void setPipMask(sel.mask, sel.radius).catch((error: unknown) =>
+      console.warn('[pip] setPipMask failed:', error),
+    )
+  }
+
   function applyDrawSettings(): void {
     const c = controls.composite
     composite.setSettings({
@@ -240,6 +254,7 @@ function main(): void {
       dy: c.dy,
     })
     output.setSelection(controls.selection)
+    syncPipMask()
   }
 
   function refresh(): void {
@@ -591,6 +606,8 @@ function main(): void {
   }
 
   applyDrawSettings()
+  // Ensure the PiP knows the mask even before the first frame/settings change.
+  syncPipMask()
   // Show the selection + handles while idle, before any camera frame exists.
   output.drawSelectionOverlay()
   // Push the (possibly restored) tray preference after the restore.

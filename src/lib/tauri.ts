@@ -103,6 +103,21 @@ export async function setRecordingMode(enabled: boolean): Promise<void> {
   await invoke('set_recording_mode', { enabled })
 }
 
+/**
+ * Report the current output-mask shape and radius percentage so the PiP window
+ * can draw a matching no-face border. No-op outside Tauri.
+ */
+export async function setPipMask(shape: string, radius: number): Promise<void> {
+  if (!isTauri()) return
+  await invoke('set_pip_mask', { shape, radius })
+}
+
+/** Read the last reported output mask; `['none', 0]` outside Tauri. */
+export async function getPipMask(): Promise<[string, number]> {
+  if (!isTauri()) return ['none', 0]
+  return invoke<[string, number]>('get_pip_mask')
+}
+
 /** Subscribe to `tray://minimized`. Returns an unlisten fn (no-op outside Tauri). */
 export async function onTrayMinimized(cb: () => void): Promise<() => void> {
   return listenTrayEvent('tray://minimized', cb)

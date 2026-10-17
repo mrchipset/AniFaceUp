@@ -10,19 +10,105 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 import { listen } from '@tauri-apps/api/event'
-import { getFacePresent, restoreMain, subscribeFrames } from '../lib/tauri'
+import { getFacePresent, getPipMask, restoreMain, subscribeFrames } from '../lib/tauri'
 
 function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-/** Mirror the face-detection state as a red border on the whole window. */
-function applyFace(present: boolean): void {
-  document.body.classList.toggle('no-face', !present)
-}
+type MaskShape = 'none' | 'round' | 'circle'
 
 const canvas = document.getElementById('frame') as HTMLCanvasElement | null
 const ctx = canvas ? canvas.getContext('2d') : null
+
+let facePresent = true
+let maskShape: MaskShape = 'none'
+let maskRadiusPct = 0
+let lastBitmap: ImageBitmap | null = null
+
+/** Repaint from the last decoded frame (no new frame required). */
+function redraw(): void {
+  if (lastBitmap) drawFrame(lastBitmap)
+}
+
+/** Mirror the face-detection state; redraw so the border can appear/disappear. */
+function applyFace(present: boolean): void {
+  facePresent = present
+  redraw()
+}
+
+/** Mirror the output mask so the no-face border follows the crop shape. */
+function applyMask(shape: string, radius: number): void {
+  maskShape = shape === 'round' || shape === 'circle' ? shape : 'none'
+  maskRadiusPct = Number.isFinite(radius) ? radius : 0
+  redraw()
+}
+
+/** Stroke the mask-shaped warning border inside the frame. */
+function drawNoFaceBorder(c: CanvasRenderingContext2D, w: number, h: number): void {
+  const lineWidth = Math.max(2, Math.round(Math.min(w, h) * 0.008))
+  const inset = lineWidth / 2 + 1
+  c.save()
+  c.strokeStyle = '#e5484d'
+  c.lineWidth = lineWidth
+  c.beginPath()
+  if (maskShape === 'circle') {
+    c.arc(w / 2, h / 2, Math.max(1, Math.min(w, h) / 2 - inset), 0, Math.PI * 2)
+    c.stroke()
+  } else if (maskShape === 'round') {
+    // `radius` is a percentage of the shorter side, matching output.ts.
+    const radius = Math.max(0, (Math.min(w, h) * maskRadiusPct) / 100 - inset)
+    const x = inset
+    const y = inset
+    const rw = Math.max(1, w - 2 * inset)
+    const rh = Math.max(1, h - 2 * inset)
+    if (typeof c.roundRect === 'function') {
+      c.roundRect(x, y, rw, rh, radius)
+      c.stroke()
+    } else {
+      strokeManualRoundRect(c, x, y, rw, rh, radius)
+    }
+  } else {
+    c.strokeRect(inset, inset, Math.max(1, w - 2 * inset), Math.max(1, h - 2 * inset))
+  }
+  c.restore()
+}
+
+/** Fallback for browsers without `CanvasRenderingContext2D.roundRect`. */
+function strokeManualRoundRect(
+  c: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number,
+): void {
+  const rr = Math.max(0, Math.min(radius, Math.min(w, h) / 2))
+  c.moveTo(x + rr, y)
+  c.lineTo(x + w - rr, y)
+  c.quadraticCurveTo(x + w, y, x + w, y + rr)
+  c.lineTo(x + w, y + h - rr)
+  c.quadraticCurveTo(x + w, y + h, x + w - rr, y + h)
+  c.lineTo(x + rr, y + h)
+  c.quadraticCurveTo(x, y + h, x, y + h - rr)
+  c.lineTo(x, y + rr)
+  c.quadraticCurveTo(x, y, x + rr, y)
+  c.closePath()
+  c.stroke()
+}
+
+function drawFrame(bmp: ImageBitmap): void {
+  if (!canvas || !ctx) return
+  if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+    canvas.width = bmp.width
+    canvas.height = bmp.height
+  }
+  const w = canvas.width
+  const h = canvas.height
+  ctx.clearRect(0, 0, w, h)
+  ctx.drawImage(bmp, 0, 0)
+  if (!facePresent) drawNoFaceBorder(ctx, w, h)
+}
 
 /** Most recent frame awaiting decode; older frames are dropped. */
 let latest: ArrayBuffer | null = null
@@ -47,15 +133,12 @@ async function drain(): Promise<void> {
       if (!canvas || !ctx) continue
       const blob = new Blob([buf], { type: 'image/png' })
       const bmp = await createImageBitmap(blob)
+      const previous = lastBitmap
+      lastBitmap = bmp
       try {
-        if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
-          canvas.width = bmp.width
-          canvas.height = bmp.height
-        }
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
-        ctx.drawImage(bmp, 0, 0)
+        drawFrame(bmp)
       } finally {
-        bmp.close()
+        previous?.close()
       }
     }
   } catch (error) {
@@ -195,4 +278,11 @@ if (isTauri()) {
   void listen<boolean>('pip://face', (event) => applyFace(!!event.payload)).catch(
     (error: unknown) => console.warn('[pip] face listen failed:', error),
   )
+  // Initial mask state, then live updates (border follows the crop shape).
+  void getPipMask()
+    .then(([shape, radius]) => applyMask(shape, radius))
+    .catch((error: unknown) => console.warn('[pip] getPipMask failed:', error))
+  void listen<{ shape: string; radius: number }>('pip://mask', (event) =>
+    applyMask(event.payload.shape, event.payload.radius),
+  ).catch((error: unknown) => console.warn('[pip] mask listen failed:', error))
 }
