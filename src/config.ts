@@ -90,6 +90,8 @@ export interface Selection {
   mask: MaskShape
   radius: number
   feather: number
+  /** Lock width/height together while resizing (mouse handles + sliders). */
+  keepAspect: boolean
 }
 
 export const SELECTION_DEFAULTS: Selection = {
@@ -101,6 +103,34 @@ export const SELECTION_DEFAULTS: Selection = {
   mask: 'none',
   radius: 18,
   feather: 0,
+  keepAspect: false,
+}
+
+/** Rectangle of the selection in composite-buffer pixels (top-left origin). */
+export interface SelRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/**
+ * Selection rectangle clamped to the canvas. Shared by the overlay renderer
+ * and the pointer hit-testing so drawn handles and hit targets line up exactly.
+ */
+export function selectionRect(sel: Selection, cw: number, ch: number): SelRect {
+  const w = cw > 0 ? Math.min(sel.w, cw) : 0
+  const h = ch > 0 ? Math.min(sel.h, ch) : 0
+  let x = sel.cx * cw - w / 2
+  let y = sel.cy * ch - h / 2
+  x = Math.max(0, Math.min(cw - w, x))
+  y = Math.max(0, Math.min(ch - h, y))
+  return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) }
+}
+
+/** Resize-handle size in composite-buffer pixels (legible at any camera size). */
+export function selectionHandlePx(canvasWidth: number): number {
+  return Math.max(8, Math.min(12, Math.round(canvasWidth / 140)))
 }
 
 // ---- Model transform (canvas-local, applied to the wrapper group) ----

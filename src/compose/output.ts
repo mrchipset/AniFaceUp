@@ -6,14 +6,14 @@
  * Draw order is composite → output → selection overlay, so the overlay never
  * contaminates the exported crop.
  */
-import { SELECTION_DEFAULTS, type MaskShape, type Selection } from '../config'
-
-export interface SelRect {
-  x: number
-  y: number
-  w: number
-  h: number
-}
+import {
+  SELECTION_DEFAULTS,
+  selectionHandlePx,
+  selectionRect,
+  type MaskShape,
+  type SelRect,
+  type Selection,
+} from '../config'
 
 export class OutputRenderer {
   readonly canvas: HTMLCanvasElement
@@ -40,15 +40,7 @@ export class OutputRenderer {
 
   /** Selection rectangle in composite pixel coordinates (top-left origin). */
   selRect(): SelRect {
-    const cw = this.comp.width
-    const ch = this.comp.height
-    const w = Math.min(this.selection.w, cw)
-    const h = Math.min(this.selection.h, ch)
-    let x = this.selection.cx * cw - w / 2
-    let y = this.selection.cy * ch - h / 2
-    x = Math.max(0, Math.min(cw - w, x))
-    y = Math.max(0, Math.min(ch - h, y))
-    return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) }
+    return selectionRect(this.selection, this.comp.width, this.comp.height)
   }
 
   /** Crop + scale + mask the composite into the output canvas. */
@@ -92,6 +84,30 @@ export class OutputRenderer {
       r.x + 6,
       Math.max(20, r.y - 8),
     )
+
+    // Resize handles: small white squares with the accent border, drawn in
+    // buffer coordinates so they scale with the canvas like the selection.
+    const hs = selectionHandlePx(this.comp.width)
+    const half = hs / 2
+    cctx.lineWidth = Math.max(1.5, this.comp.width / 900)
+    cctx.fillStyle = '#ffffff'
+    cctx.strokeStyle = '#4f7cff'
+    const handles: Array<[number, number]> = [
+      [r.x, r.y],
+      [r.x + r.w, r.y],
+      [r.x + r.w, r.y + r.h],
+      [r.x, r.y + r.h],
+      [r.x + r.w / 2, r.y],
+      [r.x + r.w, r.y + r.h / 2],
+      [r.x + r.w / 2, r.y + r.h],
+      [r.x, r.y + r.h / 2],
+    ]
+    for (const [hx, hy] of handles) {
+      cctx.beginPath()
+      cctx.rect(Math.round(hx - half), Math.round(hy - half), hs, hs)
+      cctx.fill()
+      cctx.stroke()
+    }
     cctx.restore()
   }
 

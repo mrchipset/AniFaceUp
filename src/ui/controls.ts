@@ -14,8 +14,11 @@ import {
   COMPOSITE_DEFAULTS,
   SELECTION_DEFAULTS,
   TRANSFORM_DEFAULTS,
+  selectionHandlePx,
+  selectionRect,
   type MaskShape,
   type ModelTransform,
+  type SelRect,
   type Selection,
 } from '../config'
 
@@ -66,6 +69,15 @@ type RangeKind = 'refresh' | 'transform' | 'expression'
 
 type StatusState = 'idle' | 'warn' | 'ok' | 'err'
 
+type SelHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+
+/** Minimum selection size, in composite-buffer pixels. */
+const MIN_SEL_PX = 32
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v))
+}
+
 const PLACEHOLDER = '\u2014' // em dash
 
 /** Map a free-text status line onto a status-dot colour. */
@@ -96,6 +108,8 @@ export class HarnessControls {
   private readonly importBtn = document.getElementById('btn-import-model')
   private readonly toastEl = document.getElementById('toast')
   private toastTimer: number | null = null
+  /** Width/height ratio captured when "keep aspect ratio" is switched on (0 = off). */
+  private aspectRatio = 0
   private readonly callbacks: ControlsCallbacks
   private readonly preview: HTMLElement | null
 
@@ -175,6 +189,7 @@ export class HarnessControls {
       mask: this.selectValue('sel_mask') as MaskShape,
       radius: this.num('sel_radius'),
       feather: this.num('sel_feather'),
+      keepAspect: this.check('sel_keep_aspect'),
     }
   }
 
@@ -215,11 +230,51 @@ export class HarnessControls {
       if (typeof v === 'number') this.setInputValue(key, v)
     }
     if (partial.mask) this.setInputValue('sel_mask', partial.mask)
+    if (typeof partial.keepAspect === 'boolean') {
+      const el = this.inputs.get('sel_keep_aspect')
+      if (el instanceof HTMLInputElement) el.checked = partial.keepAspect
+      this.aspectRatio = partial.keepAspect ? this.num('sel_w') / Math.max(1, this.num('sel_h')) : 0
+    }
   }
 
   setSelectionCenter(cx: number, cy: number): void {
     this.setInputValue('sel_x', cx)
     this.setInputValue('sel_y', cy)
+  }
+
+  /**
+   * Keep width/height locked together while "keep aspect ratio" is on. The
+   * moved slider stays within its feasible sub-range so the derived dimension
+   * never leaves its own [min,max] — the ratio always holds exactly.
+   */
+  private syncAspect(key: string): void {
+    if (!this.check('sel_keep_aspect')) return
+    const aspect = this.aspectRatio
+    if (!(aspect > 0)) return
+    const [wMin, wMax] = this.rangeBounds('sel_w')
+    const [hMin, hMax] = this.rangeBounds('sel_h')
+    if (key === 'sel_w') {
+      const lo = Math.max(wMin, hMin * aspect)
+      const hi = Math.min(wMax, hMax * aspect)
+      const w = clamp(this.num('sel_w'), lo, hi)
+      this.setInputValue('sel_w', Math.round(w))
+      this.setInputValue('sel_h', Math.round(w / aspect))
+    } else if (key === 'sel_h') {
+      const lo = Math.max(hMin, wMin / aspect)
+      const hi = Math.min(hMax, wMax / aspect)
+      const h = clamp(this.num('sel_h'), lo, hi)
+      this.setInputValue('sel_h', Math.round(h))
+      this.setInputValue('sel_w', Math.round(h * aspect))
+    }
+  }
+
+  /** [min, max] of a range input, used by the aspect coupling. */
+  private rangeBounds(key: string): [number, number] {
+    const el = this.inputs.get(key)
+    if (!(el instanceof HTMLInputElement)) return [0, 1]
+    const min = Number(el.min)
+    const max = Number(el.max)
+    return [isFinite(min) ? min : 0, isFinite(max) ? max : 1]
   }
 
   setRunning(running: boolean): void {
@@ -280,30 +335,217 @@ export class HarnessControls {
     this.statusDevice.textContent = PLACEHOLDER
   }
 
-  /** Wire drag-to-move selection directly on the composite view. */
+  /** Wire drag-to-move and drag-to-resize on the composite view. */
   attachSelectionDrag(composite: HTMLCanvasElement): void {
-    let dragging = false
-    const move = (ev: PointerEvent): void => {
+    const cursorFor: Record<SelHandle, string> = {
+      nw: 'nwse-resize',
+      se: 'nwse-resize',
+      ne: 'nesw-resize',
+      sw: 'nesw-resize',
+      e: 'ew-resize',
+      w: 'ew-resize',
+      n: 'ns-resize',
+      s: 'ns-resize',
+    }
+
+    /** Pointer position mapped to composite-buffer pixels. */
+    const bufferPoint = (ev: PointerEvent): { x: number; y: number } | null => {
       const rect = composite.getBoundingClientRect()
-      if (!rect.width || !rect.height) return
-      const cx = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width))
-      const cy = Math.min(1, Math.max(0, (ev.clientY - rect.top) / rect.height))
+      if (!rect.width || !rect.height || !composite.width || !composite.height) return null
+      return {
+        x: ((ev.clientX - rect.left) / rect.width) * composite.width,
+        y: ((ev.clientY - rect.top) / rect.height) * composite.height,
+      }
+    }
+
+    const currentRect = (): SelRect => selectionRect(this.selection, composite.width, composite.height)
+
+    const pointsFor = (r: SelRect): Array<{ id: SelHandle; x: number; y: number }> => [
+      { id: 'nw', x: r.x, y: r.y },
+      { id: 'ne', x: r.x + r.w, y: r.y },
+      { id: 'se', x: r.x + r.w, y: r.y + r.h },
+      { id: 'sw', x: r.x, y: r.y + r.h },
+      { id: 'n', x: r.x + r.w / 2, y: r.y },
+      { id: 'e', x: r.x + r.w, y: r.y + r.h / 2 },
+      { id: 's', x: r.x + r.w / 2, y: r.y + r.h },
+      { id: 'w', x: r.x, y: r.y + r.h / 2 },
+    ]
+
+    /** Nearest handle within a comfortable buffer-pixel tolerance. */
+    const hitHandle = (p: { x: number; y: number }, r: SelRect): SelHandle | null => {
+      const tolerance = Math.max(12, selectionHandlePx(composite.width))
+      let best: SelHandle | null = null
+      let bestDist = Infinity
+      for (const h of pointsFor(r)) {
+        const d = Math.hypot(p.x - h.x, p.y - h.y)
+        if (d <= tolerance && d < bestDist) {
+          bestDist = d
+          best = h.id
+        }
+      }
+      return best
+    }
+
+    const inside = (p: { x: number; y: number }, r: SelRect): boolean =>
+      p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
+
+    let mode: 'none' | 'move' | 'resize' = 'none'
+    let active: SelHandle | null = null
+    let start: SelRect = { x: 0, y: 0, w: 0, h: 0 }
+    let aspect = 0
+    let centerX = 0
+    let centerY = 0
+
+    const setCursor = (ev: PointerEvent, p: { x: number; y: number } | null): void => {
+      if (ev.pointerType === 'touch') return
+      const r = currentRect()
+      const handle = p ? hitHandle(p, r) : null
+      composite.style.cursor = handle ? cursorFor[handle] : p && inside(p, r) ? 'move' : 'crosshair'
+    }
+
+    const applyMove = (p: { x: number; y: number }): void => {
+      const cx = clamp(p.x / composite.width, 0, 1)
+      const cy = clamp(p.y / composite.height, 0, 1)
       this.setSelectionCenter(cx, cy)
       this.callbacks.onRefresh()
     }
+
+    /** Commit a buffer-space rect back into the inputs (w/h + normalised centre). */
+    const writeRect = (left: number, top: number, w: number, h: number): void => {
+      const cw = composite.width
+      const ch = composite.height
+      const rw = Math.max(1, Math.round(w))
+      const rh = Math.max(1, Math.round(h))
+      const cx = clamp((left + rw / 2) / cw, 0, 1)
+      const cy = clamp((top + rh / 2) / ch, 0, 1)
+      this.setInputValue('sel_w', rw)
+      this.setInputValue('sel_h', rh)
+      this.setSelectionCenter(Math.round(cx * 1000) / 1000, Math.round(cy * 1000) / 1000)
+      this.callbacks.onRefresh()
+    }
+
+    const applyResize = (p: { x: number; y: number }): void => {
+      if (!active) return
+      const cw = composite.width
+      const ch = composite.height
+      const r = start
+      const leftSide = active === 'w' || active === 'nw' || active === 'sw'
+      const rightSide = active === 'e' || active === 'ne' || active === 'se'
+      const topSide = active === 'n' || active === 'nw' || active === 'ne'
+      const bottomSide = active === 's' || active === 'sw' || active === 'se'
+      const horizontal = leftSide || rightSide
+      const vertical = topSide || bottomSide
+
+      if (!(aspect > 0)) {
+        // Free resize: the opposite edges stay put; clamp each moving edge.
+        let left = r.x
+        let right = r.x + r.w
+        let top = r.y
+        let bottom = r.y + r.h
+        if (leftSide) left = clamp(p.x, 0, Math.max(0, right - MIN_SEL_PX))
+        if (rightSide) right = clamp(p.x, left + MIN_SEL_PX, cw)
+        if (topSide) top = clamp(p.y, 0, Math.max(0, bottom - MIN_SEL_PX))
+        if (bottomSide) bottom = clamp(p.y, top + MIN_SEL_PX, ch)
+        writeRect(left, top, right - left, bottom - top)
+        return
+      }
+
+      const minW = Math.max(MIN_SEL_PX, MIN_SEL_PX * aspect)
+      const minH = Math.max(MIN_SEL_PX, MIN_SEL_PX / aspect)
+
+      if (horizontal && vertical) {
+        // Corner: opposite corner anchored; the dominant pointer extent drives
+        // the locked size (the rect grows to contain the pointer).
+        const ax = rightSide ? r.x : r.x + r.w
+        const ay = bottomSide ? r.y : r.y + r.h
+        const wantW = Math.max(0, rightSide ? p.x - ax : ax - p.x)
+        const wantH = Math.max(0, bottomSide ? p.y - ay : ay - p.y)
+        const maxW = Math.min(rightSide ? cw - ax : ax, (bottomSide ? ch - ay : ay) * aspect)
+        const w = clamp(Math.max(wantW, wantH * aspect), minW, Math.max(1, maxW))
+        const h = w / aspect
+        writeRect(rightSide ? ax : ax - w, bottomSide ? ay : ay - h, w, h)
+        return
+      }
+
+      if (horizontal) {
+        // Horizontal edge: opposite vertical edge anchored; the perpendicular
+        // dimension grows symmetrically about the original centre.
+        const ax = rightSide ? r.x : r.x + r.w
+        const maxW = Math.min(rightSide ? cw - ax : ax, aspect * 2 * Math.min(centerY, ch - centerY))
+        const want = Math.max(0, rightSide ? p.x - ax : ax - p.x)
+        const w = clamp(want, minW, Math.max(1, maxW))
+        const h = w / aspect
+        writeRect(rightSide ? ax : ax - w, centerY - h / 2, w, h)
+        return
+      }
+
+      // Vertical edge: opposite horizontal edge anchored; centred horizontally.
+      const ay = bottomSide ? r.y : r.y + r.h
+      const maxH = Math.min(bottomSide ? ch - ay : ay, (2 * Math.min(centerX, cw - centerX)) / aspect)
+      const want = Math.max(0, bottomSide ? p.y - ay : ay - p.y)
+      const h = clamp(want, minH, Math.max(1, maxH))
+      const w = h * aspect
+      writeRect(centerX - w / 2, bottomSide ? ay : ay - h, w, h)
+    }
+
     composite.addEventListener('pointerdown', (ev) => {
-      dragging = true
-      composite.setPointerCapture(ev.pointerId)
-      move(ev)
+      const p = bufferPoint(ev)
+      if (!p) return
+      const r = currentRect()
+      const handle = hitHandle(p, r)
+      if (handle) {
+        mode = 'resize'
+        active = handle
+        start = r
+        aspect = this.check('sel_keep_aspect')
+          ? this.aspectRatio > 0
+            ? this.aspectRatio
+            : r.w / Math.max(1, r.h)
+          : 0
+        centerX = r.x + r.w / 2
+        centerY = r.y + r.h / 2
+        composite.setPointerCapture(ev.pointerId)
+        setCursor(ev, p)
+        return
+      }
+      if (inside(p, r)) {
+        mode = 'move'
+        active = null
+        composite.setPointerCapture(ev.pointerId)
+        applyMove(p)
+        setCursor(ev, p)
+        return
+      }
+      mode = 'none'
+      active = null
     })
+
     composite.addEventListener('pointermove', (ev) => {
-      if (dragging) move(ev)
+      const p = bufferPoint(ev)
+      if (!p) return
+      if (mode === 'resize') {
+        applyResize(p)
+        return
+      }
+      if (mode === 'move') {
+        applyMove(p)
+        return
+      }
+      setCursor(ev, p)
     })
-    composite.addEventListener('pointerup', () => {
-      dragging = false
-    })
-    composite.addEventListener('pointercancel', () => {
-      dragging = false
+
+    const end = (ev: PointerEvent): void => {
+      mode = 'none'
+      active = null
+      if (composite.hasPointerCapture(ev.pointerId)) composite.releasePointerCapture(ev.pointerId)
+      setCursor(ev, bufferPoint(ev))
+    }
+    composite.addEventListener('pointerup', end)
+    composite.addEventListener('pointercancel', end)
+    composite.addEventListener('pointerleave', (ev) => {
+      if (mode !== 'none') return
+      if (ev.pointerType === 'touch') return
+      composite.style.cursor = 'crosshair'
     })
   }
 
@@ -396,6 +638,7 @@ export class HarnessControls {
       body.append(
         this.rangeRow({ key: 'sel_w', label: 'width', min: 50, max: 1920, step: 1, value: SELECTION_DEFAULTS.w, decimals: 0 }, 'refresh'),
         this.rangeRow({ key: 'sel_h', label: 'height', min: 50, max: 1920, step: 1, value: SELECTION_DEFAULTS.h, decimals: 0 }, 'refresh'),
+        this.row([this.checkbox('sel_keep_aspect', 'keep aspect ratio', SELECTION_DEFAULTS.keepAspect)], 'wrap'),
         this.rangeRow({ key: 'sel_x', label: 'position x', min: 0, max: 1, step: 0.001, value: SELECTION_DEFAULTS.cx, decimals: 3 }, 'refresh'),
         this.rangeRow({ key: 'sel_y', label: 'position y', min: 0, max: 1, step: 0.001, value: SELECTION_DEFAULTS.cy, decimals: 3 }, 'refresh'),
         this.rangeRow({ key: 'sel_mul', label: 'multiplier', min: 0.25, max: 4, step: 0.05, value: SELECTION_DEFAULTS.mul, decimals: 2 }, 'refresh'),
@@ -551,6 +794,8 @@ export class HarnessControls {
     value.textContent = spec.value.toFixed(spec.decimals)
     input.addEventListener('input', () => {
       value.textContent = Number(input.value).toFixed(spec.decimals)
+      // Couple width/height when the aspect lock is on (no-op otherwise).
+      this.syncAspect(spec.key)
       if (kind === 'transform') this.callbacks.onTransform()
       else if (kind === 'expression') this.callbacks.onExpression()
       else this.callbacks.onRefresh()
@@ -633,6 +878,14 @@ export class HarnessControls {
     }
     if (key === 'tray_min') {
       this.callbacks.onToggleMinimizeToTray()
+      return
+    }
+    if (key === 'sel_keep_aspect') {
+      // Capture the ratio the moment the lock is engaged; release it on off.
+      this.aspectRatio = this.check('sel_keep_aspect')
+        ? this.num('sel_w') / Math.max(1, this.num('sel_h'))
+        : 0
+      this.callbacks.onRefresh()
       return
     }
     this.callbacks.onRefresh()
